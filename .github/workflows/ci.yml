@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Kept in step with the go directive in go.mod.
+          go-version: "1.25"
+          cache-dependency-path: go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      # examples/ is a separate module, so ./... above does not reach it. Left
+      # unchecked, an example silently rots the first time a signature changes.
+      - name: Build examples
+        run: cd examples && go build ./... && go vet ./...
+
+      # internal/gen is protoc output and is formatted by the generator, not by
+      # us; holding it to our formatting would fail on a plugin's choices.
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^internal/gen/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
