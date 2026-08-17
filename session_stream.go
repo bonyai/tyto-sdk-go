@@ -7,7 +7,8 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
-	runtimev1 "github.com/bonyai/tyto-go/internal/gen/tyto/runtime/v1"
+	runtimev1grpc "buf.build/gen/go/bonya/tyto/grpc/go/tyto/runtime/v1/runtimev1grpc"
+	runtimev1 "buf.build/gen/go/bonya/tyto/protocolbuffers/go/tyto/runtime/v1"
 )
 
 // SessionStream is a live attach to a managed session. It mirrors
@@ -26,7 +27,7 @@ type SessionStream struct {
 	Cols           int
 	Rows           int
 
-	stream     runtimev1.GuestService_AttachSessionClient
+	stream     runtimev1grpc.GuestService_AttachSessionClient
 	cancel     context.CancelFunc
 	sendMu     sync.Mutex
 	events     chan sessionEvent

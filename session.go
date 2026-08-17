@@ -7,7 +7,8 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
-	runtimev1 "github.com/bonyai/tyto-go/internal/gen/tyto/runtime/v1"
+	runtimev1grpc "buf.build/gen/go/bonya/tyto/grpc/go/tyto/runtime/v1/runtimev1grpc"
+	runtimev1 "buf.build/gen/go/bonya/tyto/protocolbuffers/go/tyto/runtime/v1"
 )
 
 // ExecSession is a live, bidirectional Exec stream. Iterate it with Next,
@@ -38,7 +39,7 @@ type ExecSession struct {
 
 // execStream is one underlying gRPC Exec stream and its reader goroutine.
 type execStream struct {
-	stream     runtimev1.GuestService_ExecClient
+	stream     runtimev1grpc.GuestService_ExecClient
 	cancel     context.CancelFunc
 	sendMu     sync.Mutex
 	events     chan execEvent

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Generated protobuf/gRPC code now comes from the Buf Schema Registry as
+  ordinary Go module dependencies
+  (`buf.build/gen/go/bonya/tyto/protocolbuffers/go` and
+  `.../grpc/go`) instead of being generated locally and vendored into
+  `internal/gen`. Building the SDK from a clean checkout no longer needs
+  `protoc` or the `protoc-gen-go*` plugins, and the generated code can no
+  longer drift from the published schema. `make proto` is gone; see the
+  README for how to move to a new schema version.
+
+  This is internal: `internal/gen` was unimportable from outside the module,
+  and no generated type appears in this SDK's exported API, so there is no
+  source change for callers.
+
 - The default endpoint is now `https://api.tyto.run`. It was previously a
   private address that was only reachable from inside the development network,
   which meant the published package could not connect anywhere without an

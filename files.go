@@ -8,7 +8,8 @@ import (
 	"sort"
 	"time"
 
-	runtimev1 "github.com/bonyai/tyto-go/internal/gen/tyto/runtime/v1"
+	runtimev1grpc "buf.build/gen/go/bonya/tyto/grpc/go/tyto/runtime/v1/runtimev1grpc"
+	runtimev1 "buf.build/gen/go/bonya/tyto/protocolbuffers/go/tyto/runtime/v1"
 )
 
 // transferChunkBytes is the chunk size used for streamed writes/uploads.
@@ -280,7 +281,7 @@ func (f *SandboxFiles) Mkdir(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	return f.unaryMutation(ctx, func(ctx context.Context, client runtimev1.GuestServiceClient) error {
+	return f.unaryMutation(ctx, func(ctx context.Context, client runtimev1grpc.GuestServiceClient) error {
 		_, err := client.MakeDirectory(ctx, &runtimev1.MakeDirectoryRequest{SandboxId: f.sandbox.ID, Path: path})
 		return err
 	})
@@ -292,7 +293,7 @@ func (f *SandboxFiles) Remove(ctx context.Context, path string, recursive bool) 
 	if err != nil {
 		return err
 	}
-	return f.unaryMutation(ctx, func(ctx context.Context, client runtimev1.GuestServiceClient) error {
+	return f.unaryMutation(ctx, func(ctx context.Context, client runtimev1grpc.GuestServiceClient) error {
 		_, err := client.RemoveFile(ctx, &runtimev1.RemoveFileRequest{SandboxId: f.sandbox.ID, Path: path, Recursive: recursive})
 		return err
 	})
@@ -309,7 +310,7 @@ func (f *SandboxFiles) Move(ctx context.Context, source, destination string) err
 	if err != nil {
 		return err
 	}
-	return f.unaryMutation(ctx, func(ctx context.Context, client runtimev1.GuestServiceClient) error {
+	return f.unaryMutation(ctx, func(ctx context.Context, client runtimev1grpc.GuestServiceClient) error {
 		_, err := client.MoveFile(ctx, &runtimev1.MoveFileRequest{SandboxId: f.sandbox.ID, SourcePath: source, DestinationPath: destination})
 		return err
 	})
@@ -351,7 +352,7 @@ func (f *SandboxFiles) writeStream(ctx context.Context, path string, produce fun
 	})
 }
 
-func (f *SandboxFiles) unaryMutation(ctx context.Context, call func(context.Context, runtimev1.GuestServiceClient) error) error {
+func (f *SandboxFiles) unaryMutation(ctx context.Context, call func(context.Context, runtimev1grpc.GuestServiceClient) error) error {
 	return f.withCapabilityRefresh(ctx, func(ctx context.Context) error {
 		client, err := f.guestClient()
 		if err != nil {
@@ -405,7 +406,7 @@ func (f *SandboxFiles) ensureFilesAllowed() error {
 	return nil
 }
 
-func (f *SandboxFiles) guestClient() (runtimev1.GuestServiceClient, error) {
+func (f *SandboxFiles) guestClient() (runtimev1grpc.GuestServiceClient, error) {
 	execEndpoint, _ := f.sandbox.snapshotState()
 	return f.sandbox.client.guestClient(execEndpoint)
 }

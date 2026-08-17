@@ -6,7 +6,8 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
-	runtimev1 "github.com/bonyai/tyto-go/internal/gen/tyto/runtime/v1"
+	runtimev1grpc "buf.build/gen/go/bonya/tyto/grpc/go/tyto/runtime/v1/runtimev1grpc"
+	runtimev1 "buf.build/gen/go/bonya/tyto/protocolbuffers/go/tyto/runtime/v1"
 )
 
 // SandboxSessions is the managed console session RPC surface: persistent,
@@ -246,7 +247,7 @@ func (s *SandboxSessions) ensureSessionsAllowed() error {
 	return nil
 }
 
-func (s *SandboxSessions) call(ctx context.Context) (runtimev1.GuestServiceClient, context.Context, context.CancelFunc, error) {
+func (s *SandboxSessions) call(ctx context.Context) (runtimev1grpc.GuestServiceClient, context.Context, context.CancelFunc, error) {
 	execEndpoint, capability := s.sandbox.snapshotState()
 	client, err := s.sandbox.client.guestClient(execEndpoint)
 	if err != nil {

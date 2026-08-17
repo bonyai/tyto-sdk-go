@@ -1107,19 +1107,31 @@ make test
 make vet
 ```
 
-Regenerate the protobuf/gRPC code. By default this exports the protos from the
-Buf Schema Registry, so no checkout of the `compute` repository is needed —
-`buf`, `protoc`, `protoc-gen-go`, and `protoc-gen-go-grpc` must be on `PATH`:
+### Protobuf/gRPC code
+
+There is no local codegen step and no `protoc` toolchain to install. The
+generated code is consumed straight from the Buf Schema Registry as two
+ordinary Go modules:
+
+| Module | Package | Contains |
+| --- | --- | --- |
+| `buf.build/gen/go/bonya/tyto/protocolbuffers/go` | `runtimev1` | message types |
+| `buf.build/gen/go/bonya/tyto/grpc/go` | `runtimev1grpc` | service clients/servers |
+
+To pick up a new schema, [publish it](../../bsr/README.md) and bump both:
 
 ```bash
-make proto
+go get buf.build/gen/go/bonya/tyto/protocolbuffers/go@latest \
+       buf.build/gen/go/bonya/tyto/grpc/go@latest
 ```
 
-To generate against unpublished proto changes instead, point at a local
-checkout:
+BSR generates these on demand, so a just-published version can briefly be
+missing from `proxy.golang.org`'s cache. If `go get` keeps resolving the
+previous version, fetch through the BSR proxy directly:
 
 ```bash
-make proto PROTO_DIR=../../compute/proto
+GOPROXY=https://buf.build/gen/go,https://proxy.golang.org,direct GOSUMDB=off \
+  go get buf.build/gen/go/bonya/tyto/protocolbuffers/go@latest
 ```
 
 ## See also

@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 
-	runtimev1 "github.com/bonyai/tyto-go/internal/gen/tyto/runtime/v1"
+	runtimev1grpc "buf.build/gen/go/bonya/tyto/grpc/go/tyto/runtime/v1/runtimev1grpc"
 )
 
 const defaultTimeout = 30 * time.Second
@@ -279,17 +279,17 @@ func (c *Client) channel(endpoint normalizedEndpoint) (*grpc.ClientConn, error) 
 // tapiClient returns a TApiServiceClient bound to the control-plane channel.
 // Organization context is injected by the interceptor registered at dial
 // time in channel(), not per call site.
-func (c *Client) tapiClient() (runtimev1.TApiServiceClient, error) {
+func (c *Client) tapiClient() (runtimev1grpc.TApiServiceClient, error) {
 	ch, err := c.channel(c.endpoint)
 	if err != nil {
 		return nil, err
 	}
-	return runtimev1.NewTApiServiceClient(ch), nil
+	return runtimev1grpc.NewTApiServiceClient(ch), nil
 }
 
 // guestClient returns a GuestServiceClient bound to a sandbox's private exec
 // endpoint.
-func (c *Client) guestClient(endpoint string) (runtimev1.GuestServiceClient, error) {
+func (c *Client) guestClient(endpoint string) (runtimev1grpc.GuestServiceClient, error) {
 	normalized, err := normalizeEndpoint(endpoint)
 	if err != nil {
 		return nil, err
@@ -298,7 +298,7 @@ func (c *Client) guestClient(endpoint string) (runtimev1.GuestServiceClient, err
 	if err != nil {
 		return nil, err
 	}
-	return runtimev1.NewGuestServiceClient(ch), nil
+	return runtimev1grpc.NewGuestServiceClient(ch), nil
 }
 
 // secrets returns the values this client should redact from error messages:

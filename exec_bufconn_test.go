@@ -11,7 +11,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	runtimev1 "github.com/bonyai/tyto-go/internal/gen/tyto/runtime/v1"
+	runtimev1grpc "buf.build/gen/go/bonya/tyto/grpc/go/tyto/runtime/v1/runtimev1grpc"
+	runtimev1 "buf.build/gen/go/bonya/tyto/protocolbuffers/go/tyto/runtime/v1"
 )
 
 // fakeGuest is a minimal in-process GuestService that echoes an Exec
@@ -19,10 +20,10 @@ import (
 // exists to exercise ExecSession's request/response streaming machinery
 // (Write/CloseStdin/Next) against a real bidi gRPC stream, not a mock.
 type fakeGuest struct {
-	runtimev1.UnimplementedGuestServiceServer
+	runtimev1grpc.UnimplementedGuestServiceServer
 }
 
-func (f *fakeGuest) Exec(stream runtimev1.GuestService_ExecServer) error {
+func (f *fakeGuest) Exec(stream runtimev1grpc.GuestService_ExecServer) error {
 	var buffered []byte
 	for {
 		req, err := stream.Recv()
@@ -54,7 +55,7 @@ func newBufconnSandbox(t *testing.T, guest *fakeGuest) *Sandbox {
 	const bufSize = 1024 * 1024
 	lis := bufconn.Listen(bufSize)
 	server := grpc.NewServer()
-	runtimev1.RegisterGuestServiceServer(server, guest)
+	runtimev1grpc.RegisterGuestServiceServer(server, guest)
 	go func() { _ = server.Serve(lis) }()
 	t.Cleanup(server.Stop)
 

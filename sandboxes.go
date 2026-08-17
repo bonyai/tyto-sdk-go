@@ -7,7 +7,7 @@ import (
 	"errors"
 	"time"
 
-	runtimev1 "github.com/bonyai/tyto-go/internal/gen/tyto/runtime/v1"
+	runtimev1 "buf.build/gen/go/bonya/tyto/protocolbuffers/go/tyto/runtime/v1"
 )
 
 // SandboxCollection is the entry point for creating, fetching, and listing sandboxes.

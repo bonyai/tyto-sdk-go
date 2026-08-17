@@ -1,3 +1,7 @@
+buf.build/gen/go/bonya/tyto/grpc/go v1.6.2-20260817064545-41ffb38cb586.1 h1:Gp6YLUvufrGiEioLTTPyxpL21t1AY2Lhjge+PZcKZjw=
+buf.build/gen/go/bonya/tyto/grpc/go v1.6.2-20260817064545-41ffb38cb586.1/go.mod h1:kZGURnyd1pUZJQWGgAXS1QeZOFL7xS7t5eYWJNcPK+4=
+buf.build/gen/go/bonya/tyto/protocolbuffers/go v1.36.12-20260817064545-41ffb38cb586.1 h1:lFqkxBY05xsdfAz2Z+6XInKTqMKP5iEZb+hZnkZvhvk=
+buf.build/gen/go/bonya/tyto/protocolbuffers/go v1.36.12-20260817064545-41ffb38cb586.1/go.mod h1:xQyeEN5WmA+k1MZ0yATXBI5u5Wg9VKaUQiYEVc3HCwI=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
@@ -34,5 +38,5 @@ google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 h1:
 google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478/go.mod h1:4Hqkh8ycfw05ld/3BWL7rJOSfebL2Q+DVDeRgYgxUU8=
 google.golang.org/grpc v1.82.1 h1:NnAxzGRA0677vCa4BUkOAnO5+FfQqVl9iUXeD0IqcGE=
 google.golang.org/grpc v1.82.1/go.mod h1:yzTZ1TB1Z3SG+LIYaI+WiE8D5+PZ3ArnrSp8zF3+/ZA=
-google.golang.org/protobuf v1.36.11 h1:fV6ZwhNocDyBLK0dj+fg8ektcVegBBuEolpbTQyBNVE=
-google.golang.org/protobuf v1.36.11/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=
+google.golang.org/protobuf v1.36.12 h1:pJOKDDOyeXErUroCihFAd5LQuwXBSpVnKGrj5o/fwxc=
+google.golang.org/protobuf v1.36.12/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=

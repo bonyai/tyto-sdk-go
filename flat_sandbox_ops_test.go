@@ -10,14 +10,15 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	runtimev1 "github.com/bonyai/tyto-go/internal/gen/tyto/runtime/v1"
+	runtimev1grpc "buf.build/gen/go/bonya/tyto/grpc/go/tyto/runtime/v1/runtimev1grpc"
+	runtimev1 "buf.build/gen/go/bonya/tyto/protocolbuffers/go/tyto/runtime/v1"
 )
 
 // fakeGuestSessions is a minimal in-process GuestService implementing only
 // CreateSession, for testing the flat session methods' resolve-then-delegate
 // wiring without exercising the streaming Exec/Attach machinery.
 type fakeGuestSessions struct {
-	runtimev1.UnimplementedGuestServiceServer
+	runtimev1grpc.UnimplementedGuestServiceServer
 
 	createSessionCalls int
 }
@@ -44,8 +45,8 @@ func newBufconnClientWithGuestSessions(t *testing.T, fake *fakeTApi, guest *fake
 	const bufSize = 1024 * 1024
 	lis := bufconn.Listen(bufSize)
 	server := grpc.NewServer()
-	runtimev1.RegisterTApiServiceServer(server, fake)
-	runtimev1.RegisterGuestServiceServer(server, guest)
+	runtimev1grpc.RegisterTApiServiceServer(server, fake)
+	runtimev1grpc.RegisterGuestServiceServer(server, guest)
 	go func() { _ = server.Serve(lis) }()
 	t.Cleanup(server.Stop)
 
