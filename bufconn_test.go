@@ -55,6 +55,12 @@ type fakeTApi struct {
 	// response for ListOrganizations.
 	organizations []*runtimev1.TApiOrganization
 
+	// listTemplatesCalls counts ListTemplates invocations.
+	listTemplatesCalls int
+	// templates, when set, replaces the default single-template response
+	// for ListTemplates.
+	templates []*runtimev1.TApiTemplate
+
 	// createSnapshotCalls, createPreviewCalls, listPreviewCalls, and
 	// deletePreviewCalls count their respective invocations, for tests that
 	// need to prove a flat method reached the sandbox-scoped RPC.
@@ -210,6 +216,19 @@ func (f *fakeTApi) ListOrganizations(ctx context.Context, req *runtimev1.TApiLis
 		}
 	}
 	return &runtimev1.TApiListOrganizationsResponse{Organizations: orgs}, nil
+}
+
+func (f *fakeTApi) ListTemplates(ctx context.Context, req *runtimev1.TApiListTemplatesRequest) (*runtimev1.TApiListTemplatesResponse, error) {
+	f.mu.Lock()
+	f.listTemplatesCalls++
+	templates := f.templates
+	f.mu.Unlock()
+	if templates == nil {
+		templates = []*runtimev1.TApiTemplate{
+			{TemplateId: "ubuntu-24.04", Version: "1", Digest: "sha256:default", IsDefault: true},
+		}
+	}
+	return &runtimev1.TApiListTemplatesResponse{Templates: templates}, nil
 }
 
 func (f *fakeTApi) CreateSnapshot(ctx context.Context, req *runtimev1.TApiCreateSnapshotRequest) (*runtimev1.TApiCreateSnapshotResponse, error) {

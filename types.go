@@ -172,6 +172,19 @@ type Organization struct {
 	CreatedAt time.Time
 }
 
+// Template is one template_id/version binding the deployment's catalog
+// offers to Sandboxes.Create and RunJob.
+//
+// One entry per version, not one per template_id: a template_id with
+// several published versions appears once per version, and IsDefault marks
+// the one a caller resolving by template_id alone (version omitted) gets.
+type Template struct {
+	ID        string
+	Version   string
+	Digest    string
+	IsDefault bool
+}
+
 // DeleteResult is the result of Sandbox.Delete.
 type DeleteResult struct {
 	SandboxID      string
