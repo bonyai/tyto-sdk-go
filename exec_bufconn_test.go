@@ -21,6 +21,7 @@ import (
 // (Write/CloseStdin/Next) against a real bidi gRPC stream, not a mock.
 type fakeGuest struct {
 	runtimev1grpc.UnimplementedGuestServiceServer
+	attachDelay time.Duration
 }
 
 func (f *fakeGuest) Exec(stream runtimev1grpc.GuestService_ExecServer) error {
@@ -48,6 +49,31 @@ func (f *fakeGuest) Exec(stream runtimev1grpc.GuestService_ExecServer) error {
 			return nil
 		}
 	}
+}
+
+func (f *fakeGuest) AttachSession(stream runtimev1grpc.GuestService_AttachSessionServer) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	if err := stream.Send(&runtimev1.AttachSessionResponse{
+		Frame: &runtimev1.AttachSessionResponse_Accepted{Accepted: &runtimev1.AttachAccepted{
+			Session: &runtimev1.SessionInfo{Name: "console", Status: runtimev1.SessionStatus_SESSION_STATUS_ATTACHED},
+		}},
+	}); err != nil {
+		return err
+	}
+	if f.attachDelay > 0 {
+		select {
+		case <-time.After(f.attachDelay):
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		}
+	}
+	return stream.Send(&runtimev1.AttachSessionResponse{
+		Frame: &runtimev1.AttachSessionResponse_Ended{Ended: &runtimev1.AttachEnded{
+			Reason: runtimev1.AttachEnded_REASON_DETACHED,
+		}},
+	})
 }
 
 func newBufconnSandbox(t *testing.T, guest *fakeGuest) *Sandbox {
@@ -150,5 +176,28 @@ func TestSandboxExecBuffered(t *testing.T) {
 	}
 	if !result.OK() {
 		t.Errorf("OK() = false, want true (exit code %d)", result.ExitCode)
+	}
+}
+
+func TestSessionAttachOutlivesClientOperationTimeout(t *testing.T) {
+	sandbox := newBufconnSandbox(t, &fakeGuest{attachDelay: 60 * time.Millisecond})
+	sandbox.client.timeout = 20 * time.Millisecond
+
+	stream, err := sandbox.Sessions.Attach(context.Background(), "console")
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	defer stream.Close()
+
+	started := time.Now()
+	event, err := stream.Next()
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < 40*time.Millisecond {
+		t.Fatalf("Next returned after %s, want it to outlive the 20ms client timeout", elapsed)
+	}
+	if _, ok := event.(SessionEnded); !ok {
+		t.Fatalf("event = %#v, want SessionEnded", event)
 	}
 }

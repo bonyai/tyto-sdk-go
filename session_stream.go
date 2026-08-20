@@ -34,7 +34,6 @@ type SessionStream struct {
 	readerDone chan struct{}
 	readerOnce sync.Once
 
-	deadline       deadline
 	cleanupTimeout time.Duration
 
 	mu     sync.Mutex
@@ -47,17 +46,13 @@ type sessionEvent struct {
 	end   bool
 }
 
-func openSessionStream(sandbox *Sandbox, name string, cols, rows, maxReplayBytes int) (*SessionStream, error) {
+func openSessionStream(ctx context.Context, sandbox *Sandbox, name string, cols, rows, maxReplayBytes int) (*SessionStream, error) {
 	execEndpoint, capability := sandbox.snapshotState()
 	guestClient, err := sandbox.client.guestClient(execEndpoint)
 	if err != nil {
 		return nil, err
 	}
 
-	dl, err := startDeadline(sandbox.client.timeout)
-	if err != nil {
-		return nil, err
-	}
 	cleanupTimeout := sandbox.client.timeout
 	if cleanupTimeout > 5*time.Second {
 		cleanupTimeout = 5 * time.Second
@@ -66,7 +61,11 @@ func openSessionStream(sandbox *Sandbox, name string, cols, rows, maxReplayBytes
 		cleanupTimeout = 500 * time.Millisecond
 	}
 
-	streamCtx, cancel := context.WithTimeout(context.Background(), sandbox.client.timeout+cleanupTimeout+time.Second)
+	// A managed-session attach is a live terminal, not a bounded operation.
+	// Applying Client.timeout here used to terminate healthy CLI consoles after
+	// the default 30 seconds. The caller's context still controls cancellation;
+	// callers that need a deadline can supply one explicitly.
+	streamCtx, cancel := context.WithCancel(ctx)
 	streamCtx = metadata.AppendToOutgoingContext(streamCtx, "bonya-sandbox-id", sandbox.ID, "bonya-exec-capability", capability)
 	grpcStream, err := guestClient.AttachSession(streamCtx)
 	if err != nil {
@@ -112,7 +111,6 @@ func openSessionStream(sandbox *Sandbox, name string, cols, rows, maxReplayBytes
 		cancel:         cancel,
 		events:         make(chan sessionEvent, 16),
 		readerDone:     make(chan struct{}),
-		deadline:       dl,
 		cleanupTimeout: cleanupTimeout,
 	}
 	return s, nil
@@ -184,29 +182,18 @@ func (s *SessionStream) emit(e sessionEvent) {
 
 // Next blocks for the next event: Stdout, Exit, SessionEnded, or
 // SessionOutputDropped. It returns (nil, nil) once the stream has ended
-// cleanly after an Exit or SessionEnded event.
+// cleanly after an Exit or SessionEnded event. A live attach has no SDK
+// deadline; pass a deadline on the context supplied to Attach when needed.
 func (s *SessionStream) Next() (any, error) {
 	s.ensureReader()
-	remaining, err := s.deadline.remaining()
-	if err != nil {
-		s.Close()
-		return nil, &TimeoutError{BaseError{Msg: "session attach timed out", SandboxID: s.sandboxID}}
+	ev := <-s.events
+	if ev.end {
+		return nil, nil
 	}
-	timer := time.NewTimer(remaining)
-	defer timer.Stop()
-	select {
-	case ev := <-s.events:
-		if ev.end {
-			return nil, nil
-		}
-		if ev.err != nil {
-			return nil, ev.err
-		}
-		return ev.value, nil
-	case <-timer.C:
-		s.Close()
-		return nil, &TimeoutError{BaseError{Msg: "session attach timed out", SandboxID: s.sandboxID}}
+	if ev.err != nil {
+		return nil, ev.err
 	}
+	return ev.value, nil
 }
 
 // Write sends stdin bytes.

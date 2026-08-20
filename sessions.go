@@ -197,7 +197,7 @@ func (s *SandboxSessions) Attach(ctx context.Context, name string, opts ...Attac
 		return nil, err
 	}
 
-	stream, err := openSessionStream(s.sandbox, name, cols, rows, o.MaxReplayBytes)
+	stream, err := openSessionStream(ctx, s.sandbox, name, cols, rows, o.MaxReplayBytes)
 	if err != nil {
 		var authErr *AuthenticationError
 		if !asAuthenticationError(err, &authErr) {
@@ -206,7 +206,7 @@ func (s *SandboxSessions) Attach(ctx context.Context, name string, opts ...Attac
 		if refreshErr := s.sandbox.ReissueCapability(ctx); refreshErr != nil {
 			return nil, refreshErr
 		}
-		return openSessionStream(s.sandbox, name, cols, rows, o.MaxReplayBytes)
+		return openSessionStream(ctx, s.sandbox, name, cols, rows, o.MaxReplayBytes)
 	}
 	return stream, nil
 }
