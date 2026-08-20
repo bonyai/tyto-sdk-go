@@ -183,6 +183,24 @@ type Template struct {
 	Version   string
 	Digest    string
 	IsDefault bool
+	Metadata  TemplateMetadata
+}
+
+// TemplateMetadata describes the operating system and tools preinstalled in
+// a Template. A catalog entry without annotations yields its zero value.
+type TemplateMetadata struct {
+	Description     string
+	OS              string
+	OSVersion       string
+	Stacks          []TemplateStack
+	AgentCLISupport []string
+}
+
+// TemplateStack is one language or runtime toolchain preinstalled in a
+// template.
+type TemplateStack struct {
+	Name    string
+	Version string
 }
 
 // DeleteResult is the result of Sandbox.Delete.

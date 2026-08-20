@@ -3,8 +3,8 @@ module github.com/bonyai/tyto-go
 go 1.25.0
 
 require (
-	buf.build/gen/go/bonya/tyto/grpc/go v1.6.2-20260820050643-fd4334f5bac4.1
-	buf.build/gen/go/bonya/tyto/protocolbuffers/go v1.36.12-20260820050643-fd4334f5bac4.1
+	buf.build/gen/go/bonya/tyto/grpc/go v1.6.2-20260820111231-ab828e1f0fe0.1
+	buf.build/gen/go/bonya/tyto/protocolbuffers/go v1.36.12-20260820111231-ab828e1f0fe0.1
 	google.golang.org/grpc v1.82.1
 )
 

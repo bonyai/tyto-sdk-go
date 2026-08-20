@@ -55,7 +55,30 @@ func templatesFromResponse(response *runtimev1.TApiListTemplatesResponse) []Temp
 			Version:   t.GetVersion(),
 			Digest:    t.GetDigest(),
 			IsDefault: t.GetIsDefault(),
+			Metadata:  templateMetadataFromProto(t.GetMetadata()),
 		})
 	}
 	return templates
+}
+
+func templateMetadataFromProto(metadata *runtimev1.TApiTemplateMetadata) TemplateMetadata {
+	if metadata == nil {
+		return TemplateMetadata{}
+	}
+
+	stacks := make([]TemplateStack, 0, len(metadata.GetStacks()))
+	for _, stack := range metadata.GetStacks() {
+		stacks = append(stacks, TemplateStack{
+			Name:    stack.GetName(),
+			Version: stack.GetVersion(),
+		})
+	}
+
+	return TemplateMetadata{
+		Description:     metadata.GetDescription(),
+		OS:              metadata.GetOs(),
+		OSVersion:       metadata.GetOsVersion(),
+		Stacks:          stacks,
+		AgentCLISupport: append([]string(nil), metadata.GetAgentCliSupport()...),
+	}
 }

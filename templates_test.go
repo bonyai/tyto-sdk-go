@@ -9,7 +9,19 @@ import (
 
 func TestListTemplatesMapsFields(t *testing.T) {
 	fake := &fakeTApi{templates: []*runtimev1.TApiTemplate{
-		{TemplateId: "ubuntu-24.04", Version: "1", Digest: "sha256:aaa", IsDefault: true},
+		{
+			TemplateId: "ubuntu-24.04",
+			Version:    "1",
+			Digest:     "sha256:aaa",
+			IsDefault:  true,
+			Metadata: &runtimev1.TApiTemplateMetadata{
+				Description:     "A development environment.",
+				Os:              "ubuntu",
+				OsVersion:       "24.04",
+				Stacks:          []*runtimev1.TApiTemplateStack{{Name: "go", Version: "1.25"}},
+				AgentCliSupport: []string{"codex"},
+			},
+		},
 		{TemplateId: "ubuntu-24.04", Version: "2", Digest: "sha256:bbb", IsDefault: false},
 	}}
 	client := newBufconnClient(t, fake)
@@ -25,6 +37,12 @@ func TestListTemplatesMapsFields(t *testing.T) {
 	first := templates[0]
 	if first.ID != "ubuntu-24.04" || first.Version != "1" || first.Digest != "sha256:aaa" || !first.IsDefault {
 		t.Errorf("first template = %+v", first)
+	}
+	if first.Metadata.Description != "A development environment." || first.Metadata.OS != "ubuntu" ||
+		first.Metadata.OSVersion != "24.04" || len(first.Metadata.Stacks) != 1 ||
+		first.Metadata.Stacks[0] != (TemplateStack{Name: "go", Version: "1.25"}) ||
+		len(first.Metadata.AgentCLISupport) != 1 || first.Metadata.AgentCLISupport[0] != "codex" {
+		t.Errorf("first template metadata = %+v", first.Metadata)
 	}
 
 	second := templates[1]
