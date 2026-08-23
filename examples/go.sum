@@ -1,7 +1,7 @@
-buf.build/gen/go/bonya/tyto/grpc/go v1.6.2-20260820111231-ab828e1f0fe0.1 h1:hrbqAW3uyi+4o9ybCoTCYevLLF+oqVoYOBxDzup3bYg=
-buf.build/gen/go/bonya/tyto/grpc/go v1.6.2-20260820111231-ab828e1f0fe0.1/go.mod h1:P1cbBbqCYV20VCaY4EW73GVc8oIg8fRIpOCjF4HxrRg=
-buf.build/gen/go/bonya/tyto/protocolbuffers/go v1.36.12-20260820111231-ab828e1f0fe0.1 h1:T6/HS2ej/Wo/iVxYYAsUU9+G24D5JdSXPnpwYkF7S7g=
-buf.build/gen/go/bonya/tyto/protocolbuffers/go v1.36.12-20260820111231-ab828e1f0fe0.1/go.mod h1:xQyeEN5WmA+k1MZ0yATXBI5u5Wg9VKaUQiYEVc3HCwI=
+buf.build/gen/go/bonya/tyto/grpc/go v1.6.2-20260823055100-c37b44f7dbe7.1 h1:rCRQqQzUrN1/yfWaFO9tvaNuh4D8JlsCm32AFxBOZf0=
+buf.build/gen/go/bonya/tyto/grpc/go v1.6.2-20260823055100-c37b44f7dbe7.1/go.mod h1:Svo7XMH91n6IDBs2WpNhAZST47prPp2MH1POJr2Uf4E=
+buf.build/gen/go/bonya/tyto/protocolbuffers/go v1.36.12-20260823055100-c37b44f7dbe7.1 h1:5rdqflbEvd/Jy344TIrXwfLVv8MBoDWjS0eHySino/c=
+buf.build/gen/go/bonya/tyto/protocolbuffers/go v1.36.12-20260823055100-c37b44f7dbe7.1/go.mod h1:xQyeEN5WmA+k1MZ0yATXBI5u5Wg9VKaUQiYEVc3HCwI=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
