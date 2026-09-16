@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `AttachOptions.IdleTimeout` lets callers bound a managed-session attachment
+  by client inactivity without terminating the managed session. Successful
+  stdin writes and terminal resizes reset the timer; guest output does not.
+
 ### Changed
 
 - Generated protobuf/gRPC code now comes from the Buf Schema Registry as

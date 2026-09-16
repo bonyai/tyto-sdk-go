@@ -39,6 +39,9 @@ type SessionStream struct {
 	readerOnce sync.Once
 
 	deadline       deadline
+	idleTimeout    time.Duration
+	lastActivity   time.Time
+	activity       chan struct{}
 	cleanupTimeout time.Duration
 
 	mu     sync.Mutex
@@ -51,7 +54,7 @@ type sessionEvent struct {
 	end   bool
 }
 
-func openSessionStream(ctx context.Context, sandbox *Sandbox, name string, cols, rows, maxReplayBytes int) (*SessionStream, error) {
+func openSessionStream(ctx context.Context, sandbox *Sandbox, name string, cols, rows, maxReplayBytes int, idleTimeout time.Duration) (*SessionStream, error) {
 	execEndpoint, capability := sandbox.snapshotState()
 	guestClient, err := sandbox.client.guestClient(execEndpoint)
 	if err != nil {
@@ -68,16 +71,31 @@ func openSessionStream(ctx context.Context, sandbox *Sandbox, name string, cols,
 
 	// A managed-session attach is a live terminal, not a short control-plane
 	// operation. Applying Client.timeout here used to terminate healthy CLI
-	// consoles after the default 30 seconds; use the dedicated five-minute
-	// attach deadline instead. A caller's shorter context deadline still wins.
+	// consoles after the default 30 seconds. The default retains the dedicated
+	// five-minute absolute deadline; an idle timeout instead bounds only quiet
+	// client connections after they have been accepted.
 	dl, err := startDeadline(defaultSessionAttachTimeout)
 	if err != nil {
 		return nil, err
 	}
-	streamCtx, cancel := context.WithTimeout(ctx, defaultSessionAttachTimeout+cleanupTimeout+time.Second)
+	var streamCtx context.Context
+	var cancel context.CancelFunc
+	var acceptTimer *time.Timer
+	if idleTimeout > 0 {
+		streamCtx, cancel = context.WithCancel(ctx)
+		// The gRPC context must not have a fixed deadline: active clients reset
+		// their idle timer. Retain a bounded admission wait until the first
+		// accepted response arrives.
+		acceptTimer = time.AfterFunc(defaultSessionAttachTimeout+cleanupTimeout+time.Second, cancel)
+	} else {
+		streamCtx, cancel = context.WithTimeout(ctx, defaultSessionAttachTimeout+cleanupTimeout+time.Second)
+	}
 	streamCtx = metadata.AppendToOutgoingContext(streamCtx, "bonya-sandbox-id", sandbox.ID, "bonya-exec-capability", capability)
 	grpcStream, err := guestClient.AttachSession(streamCtx)
 	if err != nil {
+		if acceptTimer != nil {
+			acceptTimer.Stop()
+		}
 		cancel()
 		return nil, mapSessionError(sandbox, capability, err)
 	}
@@ -93,19 +111,31 @@ func openSessionStream(ctx context.Context, sandbox *Sandbox, name string, cols,
 		},
 	}
 	if err := grpcStream.Send(start); err != nil {
+		if acceptTimer != nil {
+			acceptTimer.Stop()
+		}
 		cancel()
 		return nil, mapSessionError(sandbox, capability, err)
 	}
 
 	first, err := grpcStream.Recv()
 	if err != nil {
+		if acceptTimer != nil {
+			acceptTimer.Stop()
+		}
 		cancel()
 		return nil, mapSessionError(sandbox, capability, err)
 	}
 	accepted, ok := first.GetFrame().(*runtimev1.AttachSessionResponse_Accepted)
 	if !ok {
+		if acceptTimer != nil {
+			acceptTimer.Stop()
+		}
 		cancel()
 		return nil, &InvalidRequestError{BaseError{Msg: "AttachSession response did not begin with an accepted frame", SandboxID: sandbox.ID}}
+	}
+	if acceptTimer != nil {
+		acceptTimer.Stop()
 	}
 
 	s := &SessionStream{
@@ -121,7 +151,12 @@ func openSessionStream(ctx context.Context, sandbox *Sandbox, name string, cols,
 		events:         make(chan sessionEvent, 16),
 		readerDone:     make(chan struct{}),
 		deadline:       dl,
+		idleTimeout:    idleTimeout,
 		cleanupTimeout: cleanupTimeout,
+	}
+	if idleTimeout > 0 {
+		s.lastActivity = time.Now()
+		s.activity = make(chan struct{}, 1)
 	}
 	return s, nil
 }
@@ -192,29 +227,75 @@ func (s *SessionStream) emit(e sessionEvent) {
 
 // Next blocks for the next event: Stdout, Exit, SessionEnded, or
 // SessionOutputDropped. It returns (nil, nil) once the stream has ended
-// cleanly after an Exit or SessionEnded event. Live attaches use a dedicated
-// five-minute deadline rather than Client.timeout.
+// cleanly after an Exit or SessionEnded event. A stream with IdleTimeout set
+// expires only after that long without client input or a terminal resize.
 func (s *SessionStream) Next() (any, error) {
 	s.ensureReader()
-	remaining, err := s.deadline.remaining()
-	if err != nil {
-		s.Close()
-		return nil, &TimeoutError{BaseError{Msg: "session attach timed out", SandboxID: s.sandboxID}}
+	for {
+		remaining, err := s.remaining()
+		if err != nil {
+			s.Close()
+			return nil, &TimeoutError{BaseError{Msg: "session attach timed out", SandboxID: s.sandboxID}}
+		}
+		timer := time.NewTimer(remaining)
+		select {
+		case ev := <-s.events:
+			timer.Stop()
+			if ev.end {
+				return nil, nil
+			}
+			if ev.err != nil {
+				return nil, ev.err
+			}
+			return ev.value, nil
+		case <-s.activity:
+			timer.Stop()
+			// Client activity reset the idle clock; calculate a fresh wait.
+			continue
+		case <-timer.C:
+			if s.idleTimeout > 0 && !s.idleExpired() {
+				// Input won the race with the timer but its notification has not
+				// been selected yet. Recalculate from the newer activity time.
+				continue
+			}
+			s.Close()
+			return nil, &TimeoutError{BaseError{Msg: "session attach timed out", SandboxID: s.sandboxID}}
+		}
 	}
-	timer := time.NewTimer(remaining)
-	defer timer.Stop()
+}
+
+func (s *SessionStream) remaining() (time.Duration, error) {
+	if s.idleTimeout == 0 {
+		return s.deadline.remaining()
+	}
+	s.mu.Lock()
+	remaining := time.Until(s.lastActivity.Add(s.idleTimeout))
+	s.mu.Unlock()
+	if remaining <= 0 {
+		return 0, &TimeoutError{BaseError{Msg: "session attach timed out", SandboxID: s.sandboxID}}
+	}
+	return remaining, nil
+}
+
+func (s *SessionStream) idleExpired() bool {
+	s.mu.Lock()
+	expired := time.Now().After(s.lastActivity.Add(s.idleTimeout))
+	s.mu.Unlock()
+	return expired
+}
+
+func (s *SessionStream) touch() {
+	if s.idleTimeout == 0 {
+		return
+	}
+	s.mu.Lock()
+	if !s.closed {
+		s.lastActivity = time.Now()
+	}
+	s.mu.Unlock()
 	select {
-	case ev := <-s.events:
-		if ev.end {
-			return nil, nil
-		}
-		if ev.err != nil {
-			return nil, ev.err
-		}
-		return ev.value, nil
-	case <-timer.C:
-		s.Close()
-		return nil, &TimeoutError{BaseError{Msg: "session attach timed out", SandboxID: s.sandboxID}}
+	case s.activity <- struct{}{}:
+	default:
 	}
 }
 
@@ -228,9 +309,13 @@ func (s *SessionStream) Write(data []byte) error {
 	s.mu.Unlock()
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
-	return s.stream.Send(&runtimev1.AttachSessionRequest{
+	err := s.stream.Send(&runtimev1.AttachSessionRequest{
 		Frame: &runtimev1.AttachSessionRequest_Stdin{Stdin: &runtimev1.StdinData{Data: data}},
 	})
+	if err == nil {
+		s.touch()
+	}
+	return err
 }
 
 // Resize changes the TTY dimensions of the attached session.
@@ -251,9 +336,13 @@ func (s *SessionStream) Resize(cols, rows int) error {
 	s.mu.Unlock()
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
-	return s.stream.Send(&runtimev1.AttachSessionRequest{
+	err = s.stream.Send(&runtimev1.AttachSessionRequest{
 		Frame: &runtimev1.AttachSessionRequest_Resize{Resize: &runtimev1.ExecResize{Cols: uint32(c), Rows: uint32(r)}},
 	})
+	if err == nil {
+		s.touch()
+	}
+	return err
 }
 
 // Detach ends the attach gracefully without touching the process. It is

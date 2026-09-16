@@ -21,7 +21,8 @@ import (
 // (Write/CloseStdin/Next) against a real bidi gRPC stream, not a mock.
 type fakeGuest struct {
 	runtimev1grpc.UnimplementedGuestServiceServer
-	attachDelay time.Duration
+	attachDelay          time.Duration
+	attachOutputInterval time.Duration
 }
 
 func (f *fakeGuest) Exec(stream runtimev1grpc.GuestService_ExecServer) error {
@@ -61,6 +62,30 @@ func (f *fakeGuest) AttachSession(stream runtimev1grpc.GuestService_AttachSessio
 		}},
 	}); err != nil {
 		return err
+	}
+	if f.attachOutputInterval > 0 {
+		deadline := time.NewTimer(f.attachDelay)
+		defer deadline.Stop()
+		ticker := time.NewTicker(f.attachOutputInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := stream.Send(&runtimev1.AttachSessionResponse{
+					Frame: &runtimev1.AttachSessionResponse_Output{Output: &runtimev1.StdoutData{Data: []byte(".")}},
+				}); err != nil {
+					return err
+				}
+			case <-deadline.C:
+				return stream.Send(&runtimev1.AttachSessionResponse{
+					Frame: &runtimev1.AttachSessionResponse_Ended{Ended: &runtimev1.AttachEnded{
+						Reason: runtimev1.AttachEnded_REASON_DETACHED,
+					}},
+				})
+			case <-stream.Context().Done():
+				return stream.Context().Err()
+			}
+		}
 	}
 	if f.attachDelay > 0 {
 		select {
@@ -199,5 +224,92 @@ func TestSessionAttachOutlivesClientOperationTimeout(t *testing.T) {
 	}
 	if _, ok := event.(SessionEnded); !ok {
 		t.Fatalf("event = %#v, want SessionEnded", event)
+	}
+}
+
+func TestSessionAttachIdleTimeout(t *testing.T) {
+	sandbox := newBufconnSandbox(t, &fakeGuest{attachDelay: time.Second})
+	stream, err := sandbox.Sessions.Attach(context.Background(), "console", AttachOptions{IdleTimeout: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	defer stream.Close()
+
+	started := time.Now()
+	_, err = stream.Next()
+	if err == nil {
+		t.Fatal("Next returned nil error, want idle timeout")
+	}
+	if _, ok := err.(*TimeoutError); !ok {
+		t.Fatalf("Next error = %T %v, want *TimeoutError", err, err)
+	}
+	if elapsed := time.Since(started); elapsed < 40*time.Millisecond {
+		t.Fatalf("idle timeout elapsed = %s, want at least 40ms", elapsed)
+	}
+}
+
+func TestSessionAttachIdleTimeoutResetsOnClientActivity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		active func(*SessionStream) error
+	}{
+		{"stdin", func(stream *SessionStream) error { return stream.Write([]byte("echo hi\n")) }},
+		{"resize", func(stream *SessionStream) error { return stream.Resize(120, 40) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sandbox := newBufconnSandbox(t, &fakeGuest{attachDelay: time.Second})
+			stream, err := sandbox.Sessions.Attach(context.Background(), "console", AttachOptions{IdleTimeout: 60 * time.Millisecond})
+			if err != nil {
+				t.Fatalf("Attach: %v", err)
+			}
+			defer stream.Close()
+
+			time.Sleep(35 * time.Millisecond)
+			if err := tc.active(stream); err != nil {
+				t.Fatalf("client activity: %v", err)
+			}
+			started := time.Now()
+			_, err = stream.Next()
+			if _, ok := err.(*TimeoutError); !ok {
+				t.Fatalf("Next error = %T %v, want *TimeoutError", err, err)
+			}
+			if elapsed := time.Since(started); elapsed < 45*time.Millisecond {
+				t.Fatalf("timeout after activity = %s, want timer reset", elapsed)
+			}
+		})
+	}
+}
+
+func TestSessionAttachIdleTimeoutDoesNotResetOnOutput(t *testing.T) {
+	sandbox := newBufconnSandbox(t, &fakeGuest{
+		attachDelay:          time.Second,
+		attachOutputInterval: 10 * time.Millisecond,
+	})
+	stream, err := sandbox.Sessions.Attach(context.Background(), "console", AttachOptions{IdleTimeout: 60 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	defer stream.Close()
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for {
+		_, err = stream.Next()
+		if err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("guest output kept an idle attachment alive")
+		}
+	}
+	if _, ok := err.(*TimeoutError); !ok {
+		t.Fatalf("Next error = %T %v, want *TimeoutError", err, err)
+	}
+}
+
+func TestSessionAttachRejectsNegativeIdleTimeout(t *testing.T) {
+	sandbox := newBufconnSandbox(t, &fakeGuest{})
+	_, err := sandbox.Sessions.Attach(context.Background(), "console", AttachOptions{IdleTimeout: -time.Second})
+	if err == nil || err.Error() != "idle_timeout must be a non-negative duration" {
+		t.Fatalf("Attach error = %v, want negative idle timeout validation", err)
 	}
 }

@@ -168,6 +168,10 @@ type AttachOptions struct {
 	Cols           int
 	Rows           int
 	MaxReplayBytes int
+	// IdleTimeout closes the attach after this long without client input or a
+	// terminal resize. Zero preserves the default absolute attach timeout.
+	// Output from the guest does not count as client activity.
+	IdleTimeout time.Duration
 }
 
 // Attach attaches to a session by name, replaying bounded output produced
@@ -193,11 +197,14 @@ func (s *SandboxSessions) Attach(ctx context.Context, name string, opts ...Attac
 	if o.MaxReplayBytes < 0 {
 		return nil, &InvalidRequestError{BaseError{Msg: "max_replay_bytes must be a non-negative integer"}}
 	}
+	if o.IdleTimeout < 0 {
+		return nil, &InvalidRequestError{BaseError{Msg: "idle_timeout must be a non-negative duration"}}
+	}
 	if err := s.ensureSessionsAllowed(); err != nil {
 		return nil, err
 	}
 
-	stream, err := openSessionStream(ctx, s.sandbox, name, cols, rows, o.MaxReplayBytes)
+	stream, err := openSessionStream(ctx, s.sandbox, name, cols, rows, o.MaxReplayBytes, o.IdleTimeout)
 	if err != nil {
 		var authErr *AuthenticationError
 		if !asAuthenticationError(err, &authErr) {
@@ -206,7 +213,7 @@ func (s *SandboxSessions) Attach(ctx context.Context, name string, opts ...Attac
 		if refreshErr := s.sandbox.ReissueCapability(ctx); refreshErr != nil {
 			return nil, refreshErr
 		}
-		return openSessionStream(ctx, s.sandbox, name, cols, rows, o.MaxReplayBytes)
+		return openSessionStream(ctx, s.sandbox, name, cols, rows, o.MaxReplayBytes, o.IdleTimeout)
 	}
 	return stream, nil
 }

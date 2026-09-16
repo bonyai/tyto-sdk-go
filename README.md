@@ -640,6 +640,11 @@ Attaching preempts any other attached client for that session: the previous
 stream receives a `SessionEnded{Reason: SessionEndedReasonTakeover}` event and
 ends.
 
+`AttachOptions.IdleTimeout` optionally ends an attach after a period without
+client input or terminal resize. Guest output does not reset this timer, and
+expiry detaches the client without stopping the managed session. Leaving it at
+zero preserves the default five-minute absolute attach deadline.
+
 `stream.Next()` yields:
 
 - `Stdout{Data []byte}`: merged output. Sessions are TTY-only, so there is no
