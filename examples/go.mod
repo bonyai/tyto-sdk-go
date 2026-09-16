@@ -7,8 +7,8 @@ go 1.25.0
 require github.com/bonyai/tyto-go v0.0.0
 
 require (
-	buf.build/gen/go/bonya/tyto/grpc/go v1.6.2-20260823055100-c37b44f7dbe7.1 // indirect
-	buf.build/gen/go/bonya/tyto/protocolbuffers/go v1.36.12-20260823055100-c37b44f7dbe7.1 // indirect
+	buf.build/gen/go/bonya/tyto/grpc/go v1.6.2-20260916122642-2ed5b5062749.1 // indirect
+	buf.build/gen/go/bonya/tyto/protocolbuffers/go v1.36.12-20260916122642-2ed5b5062749.2 // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.36.0 // indirect

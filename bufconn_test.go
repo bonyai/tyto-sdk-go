@@ -500,10 +500,11 @@ func TestListRetriesOnUnavailableThenSucceeds(t *testing.T) {
 
 func runningMetadata(sandboxID, name string) *runtimev1.TApiSandboxMetadata {
 	return &runtimev1.TApiSandboxMetadata{
-		SandboxId:   sandboxID,
-		OperationId: "op-1",
-		Observed:    &runtimev1.TerminalStatus{State: runtimev1.TerminalState_TERMINAL_STATE_RUNNING},
-		Name:        name,
+		SandboxId:          sandboxID,
+		OperationId:        "op-1",
+		Observed:           &runtimev1.TerminalStatus{State: runtimev1.TerminalState_TERMINAL_STATE_RUNNING},
+		Name:               name,
+		CreatedAtUnixNanos: time.Date(2026, 9, 16, 12, 30, 0, 0, time.UTC).UnixNano(),
 	}
 }
 
@@ -551,6 +552,25 @@ func TestListPassesNameFilterAndReturnsNames(t *testing.T) {
 	}
 	if len(summaries) != 1 || summaries[0].Name != "my-box" {
 		t.Fatalf("summaries = %#v, want one named my-box", summaries)
+	}
+	wantCreatedAt := time.Date(2026, 9, 16, 12, 30, 0, 0, time.UTC)
+	if !summaries[0].CreatedAt.Equal(wantCreatedAt) {
+		t.Fatalf("summary.CreatedAt = %s, want %s", summaries[0].CreatedAt, wantCreatedAt)
+	}
+}
+
+func TestListLeavesMissingCreationTimeZero(t *testing.T) {
+	metadata := runningMetadata("sbx-1", "my-box")
+	metadata.CreatedAtUnixNanos = 0
+	fake := &fakeTApi{listSandboxes: []*runtimev1.TApiSandboxMetadata{metadata}}
+	client := newBufconnClient(t, fake)
+
+	summaries, err := client.Sandboxes.List(context.Background())
+	if err != nil {
+		t.Fatalf("List error = %v", err)
+	}
+	if !summaries[0].CreatedAt.IsZero() {
+		t.Fatalf("summary.CreatedAt = %s, want zero time", summaries[0].CreatedAt)
 	}
 }
 

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `SandboxSummary.CreatedAt` reports the creation time returned by
+  `Sandboxes.List`.
+
 - `AttachOptions.IdleTimeout` lets callers bound a managed-session attachment
   by client inactivity without terminating the managed session. Successful
   stdin writes and terminal resizes reset the timer; guest output does not.

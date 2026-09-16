@@ -492,6 +492,10 @@ func summaryFromMetadata(metadata *runtimev1.TApiSandboxMetadata) (SandboxSummar
 	if err != nil {
 		return SandboxSummary{}, err
 	}
+	var createdAt time.Time
+	if nanos := metadata.GetCreatedAtUnixNanos(); nanos != 0 {
+		createdAt = time.Unix(0, nanos).UTC()
+	}
 	return SandboxSummary{
 		ID:                 metadata.GetSandboxId(),
 		OperationID:        metadata.GetOperationId(),
@@ -501,6 +505,7 @@ func summaryFromMetadata(metadata *runtimev1.TApiSandboxMetadata) (SandboxSummar
 		FailureCode:        metadata.GetObserved().GetCode(),
 		FailureMessage:     metadata.GetObserved().GetMessage(),
 		Name:               metadata.GetName(),
+		CreatedAt:          createdAt,
 	}, nil
 }
 

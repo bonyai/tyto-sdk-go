@@ -227,4 +227,5 @@ type SandboxSummary struct {
 	FailureCode        string
 	FailureMessage     string
 	Name               string
+	CreatedAt          time.Time
 }
