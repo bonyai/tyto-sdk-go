@@ -10,18 +10,7 @@ import (
 	runtimev1 "buf.build/gen/go/bonya/tyto/protocolbuffers/go/tyto/runtime/v1"
 )
 
-// SandboxSessions is the managed console session RPC surface: persistent,
-// guest-owned command sessions that outlive the client connection.
-//
-// Capability refresh: an UNAUTHENTICATED rejection (an expired token)
-// transparently calls Sandbox.ReissueCapability and retries exactly once, at
-// admission time only, never mid-stream. PERMISSION_DENIED never triggers a
-// refresh.
-type SandboxSessions struct {
-	sandbox *Sandbox
-}
-
-// CreateSessionOptions configures SandboxSessions.Create.
+// CreateSessionOptions configures Sandbox.CreateSession.
 type CreateSessionOptions struct {
 	Env  map[string]string
 	Cwd  string
@@ -33,8 +22,14 @@ type CreateSessionOptions struct {
 	Replace bool
 }
 
-// Create starts a named TTY session.
-func (s *SandboxSessions) Create(ctx context.Context, name string, command []string, opts ...CreateSessionOptions) (SessionInfo, error) {
+// CreateSession starts a named TTY session: a persistent, guest-owned
+// command session that outlives the client connection.
+//
+// Capability refresh: an UNAUTHENTICATED rejection (an expired token)
+// transparently calls Sandbox.ReissueCapability and retries exactly once, at
+// admission time only, never mid-stream. PERMISSION_DENIED never triggers a
+// refresh.
+func (s *Sandbox) CreateSession(ctx context.Context, name string, command []string, opts ...CreateSessionOptions) (SessionInfo, error) {
 	name, err := validateSessionName(name)
 	if err != nil {
 		return SessionInfo{}, err
@@ -65,8 +60,8 @@ func (s *SandboxSessions) Create(ctx context.Context, name string, command []str
 	}
 
 	var result SessionInfo
-	err = s.withCapabilityRefresh(ctx, func(ctx context.Context) error {
-		client, callCtx, cancel, err := s.call(ctx)
+	err = s.withSessionCapabilityRefresh(ctx, func(ctx context.Context) error {
+		client, callCtx, cancel, err := s.sessionCall(ctx)
 		if err != nil {
 			return err
 		}
@@ -81,7 +76,7 @@ func (s *SandboxSessions) Create(ctx context.Context, name string, command []str
 			Replace:    o.Replace,
 		})
 		if err != nil {
-			return s.mapError(err)
+			return s.mapSessionError(err)
 		}
 		result = sessionInfoFromProto(resp.GetSession())
 		return nil
@@ -89,20 +84,20 @@ func (s *SandboxSessions) Create(ctx context.Context, name string, command []str
 	return result, err
 }
 
-// List lists sessions. This works on a suspended sandbox without waking it:
-// the result's SandboxSuspended is true when served from the suspend-time
-// snapshot rather than the live guest.
-func (s *SandboxSessions) List(ctx context.Context) (SessionList, error) {
+// ListSessions lists sessions. This works on a suspended sandbox without
+// waking it: the result's SandboxSuspended is true when served from the
+// suspend-time snapshot rather than the live guest.
+func (s *Sandbox) ListSessions(ctx context.Context) (SessionList, error) {
 	var result SessionList
-	err := s.withCapabilityRefresh(ctx, func(ctx context.Context) error {
-		client, callCtx, cancel, err := s.call(ctx)
+	err := s.withSessionCapabilityRefresh(ctx, func(ctx context.Context) error {
+		client, callCtx, cancel, err := s.sessionCall(ctx)
 		if err != nil {
 			return err
 		}
 		defer cancel()
 		resp, err := client.ListSessions(callCtx, &runtimev1.ListSessionsRequest{})
 		if err != nil {
-			return s.mapError(err)
+			return s.mapSessionError(err)
 		}
 		infos := make([]SessionInfo, 0, len(resp.GetSessions()))
 		for _, info := range resp.GetSessions() {
@@ -114,7 +109,7 @@ func (s *SandboxSessions) List(ctx context.Context) (SessionList, error) {
 	return result, err
 }
 
-// KillOptions configures SandboxSessions.Kill.
+// KillOptions configures Sandbox.KillSession.
 type KillOptions struct {
 	// Signal defaults to "TERM" when empty.
 	Signal string
@@ -123,9 +118,9 @@ type KillOptions struct {
 	GraceMS int
 }
 
-// Kill signals a session's process group, escalating to SIGKILL after the
-// grace period if it has not exited.
-func (s *SandboxSessions) Kill(ctx context.Context, name string, opts ...KillOptions) (SessionInfo, error) {
+// KillSession signals a session's process group, escalating to SIGKILL after
+// the grace period if it has not exited.
+func (s *Sandbox) KillSession(ctx context.Context, name string, opts ...KillOptions) (SessionInfo, error) {
 	name, err := validateSessionName(name)
 	if err != nil {
 		return SessionInfo{}, err
@@ -143,8 +138,8 @@ func (s *SandboxSessions) Kill(ctx context.Context, name string, opts ...KillOpt
 	}
 
 	var result SessionInfo
-	err = s.withCapabilityRefresh(ctx, func(ctx context.Context) error {
-		client, callCtx, cancel, err := s.call(ctx)
+	err = s.withSessionCapabilityRefresh(ctx, func(ctx context.Context) error {
+		client, callCtx, cancel, err := s.sessionCall(ctx)
 		if err != nil {
 			return err
 		}
@@ -155,7 +150,7 @@ func (s *SandboxSessions) Kill(ctx context.Context, name string, opts ...KillOpt
 			GraceMs: uint32(o.GraceMS),
 		})
 		if err != nil {
-			return s.mapError(err)
+			return s.mapSessionError(err)
 		}
 		result = sessionInfoFromProto(resp.GetSession())
 		return nil
@@ -163,7 +158,7 @@ func (s *SandboxSessions) Kill(ctx context.Context, name string, opts ...KillOpt
 	return result, err
 }
 
-// AttachOptions configures SandboxSessions.Attach.
+// AttachOptions configures Sandbox.AttachSession.
 type AttachOptions struct {
 	Cols           int
 	Rows           int
@@ -174,10 +169,10 @@ type AttachOptions struct {
 	IdleTimeout time.Duration
 }
 
-// Attach attaches to a session by name, replaying bounded output produced
-// while detached. A second attach preempts an existing one: the loser's
-// stream ends with a SessionEnded(TAKEOVER) event.
-func (s *SandboxSessions) Attach(ctx context.Context, name string, opts ...AttachOptions) (*SessionStream, error) {
+// AttachSession attaches to a session by name, replaying bounded output
+// produced while detached. A second attach preempts an existing one: the
+// loser's stream ends with a SessionEnded(TAKEOVER) event.
+func (s *Sandbox) AttachSession(ctx context.Context, name string, opts ...AttachOptions) (*SessionStream, error) {
 	name, err := validateSessionName(name)
 	if err != nil {
 		return nil, err
@@ -204,16 +199,16 @@ func (s *SandboxSessions) Attach(ctx context.Context, name string, opts ...Attac
 		return nil, err
 	}
 
-	stream, err := openSessionStream(ctx, s.sandbox, name, cols, rows, o.MaxReplayBytes, o.IdleTimeout)
+	stream, err := openSessionStream(ctx, s, name, cols, rows, o.MaxReplayBytes, o.IdleTimeout)
 	if err != nil {
 		var authErr *AuthenticationError
 		if !asAuthenticationError(err, &authErr) {
 			return nil, err
 		}
-		if refreshErr := s.sandbox.ReissueCapability(ctx); refreshErr != nil {
+		if refreshErr := s.ReissueCapability(ctx); refreshErr != nil {
 			return nil, refreshErr
 		}
-		return openSessionStream(ctx, s.sandbox, name, cols, rows, o.MaxReplayBytes, o.IdleTimeout)
+		return openSessionStream(ctx, s, name, cols, rows, o.MaxReplayBytes, o.IdleTimeout)
 	}
 	return stream, nil
 }
@@ -226,7 +221,7 @@ func asAuthenticationError(err error, target **AuthenticationError) bool {
 	return false
 }
 
-func (s *SandboxSessions) withCapabilityRefresh(ctx context.Context, call func(context.Context) error) error {
+func (s *Sandbox) withSessionCapabilityRefresh(ctx context.Context, call func(context.Context) error) error {
 	if err := s.ensureSessionsAllowed(); err != nil {
 		return err
 	}
@@ -238,40 +233,40 @@ func (s *SandboxSessions) withCapabilityRefresh(ctx context.Context, call func(c
 	if !asAuthenticationError(err, &authErr) {
 		return err
 	}
-	if refreshErr := s.sandbox.ReissueCapability(ctx); refreshErr != nil {
+	if refreshErr := s.ReissueCapability(ctx); refreshErr != nil {
 		return refreshErr
 	}
 	return call(ctx)
 }
 
-func (s *SandboxSessions) ensureSessionsAllowed() error {
-	if s.sandbox.isDeleted() {
-		return &SandboxDeletedError{BaseError{Msg: "sandbox has been deleted", SandboxID: s.sandbox.ID, OperationID: s.sandbox.OperationID}}
+func (s *Sandbox) ensureSessionsAllowed() error {
+	if s.isDeleted() {
+		return &SandboxDeletedError{BaseError{Msg: "sandbox has been deleted", SandboxID: s.ID, OperationID: s.OperationID}}
 	}
-	if s.sandbox.LastObservedStatus == StatusFailed {
-		return s.sandbox.failedError()
+	if s.LastObservedStatus == StatusFailed {
+		return s.failedError()
 	}
 	return nil
 }
 
-func (s *SandboxSessions) call(ctx context.Context) (runtimev1grpc.GuestServiceClient, context.Context, context.CancelFunc, error) {
-	execEndpoint, capability := s.sandbox.snapshotState()
-	client, err := s.sandbox.client.guestClient(execEndpoint)
+func (s *Sandbox) sessionCall(ctx context.Context) (runtimev1grpc.GuestServiceClient, context.Context, context.CancelFunc, error) {
+	execEndpoint, capability := s.snapshotState()
+	client, err := s.client.guestClient(execEndpoint)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	remaining, err := startDeadlineRemaining(s.sandbox.client.timeout)
+	remaining, err := startDeadlineRemaining(s.client.timeout)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, remaining)
-	callCtx = metadata.AppendToOutgoingContext(callCtx, "bonya-sandbox-id", s.sandbox.ID, "bonya-exec-capability", capability)
+	callCtx = metadata.AppendToOutgoingContext(callCtx, "bonya-sandbox-id", s.ID, "bonya-exec-capability", capability)
 	return client, callCtx, cancel, nil
 }
 
-func (s *SandboxSessions) mapError(err error) error {
-	_, capability := s.sandbox.snapshotState()
-	return MapRPCError(err, s.sandbox.client.secrets(capability), WithSandboxID(s.sandbox.ID), WithOperationID(s.sandbox.OperationID), WithSessionRPC())
+func (s *Sandbox) mapSessionError(err error) error {
+	_, capability := s.snapshotState()
+	return MapRPCError(err, s.client.secrets(capability), WithSandboxID(s.ID), WithOperationID(s.OperationID), WithSessionRPC())
 }
 
 func sessionInfoFromProto(info *runtimev1.SessionInfo) SessionInfo {

@@ -24,7 +24,7 @@ func main() {
 
 	ctx := context.Background()
 
-	sandbox, err := client.CreateSandbox(ctx, "ubuntu-24.04")
+	sandbox, err := client.CreateSandbox(ctx, "bonya-dev")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -44,13 +44,13 @@ func main() {
 	fmt.Printf("preview: %s\n", preview.URL)
 
 	// A token-mode URL needs the sandbox's capability, and a URL is not a safe
-	// place to leave one. BrowserURL mints a single-use entry point: the
+	// place to leave one. PreviewBrowserURL mints a single-use entry point: the
 	// gateway validates the token, swaps it for an HttpOnly cookie, and
 	// redirects to the same address without it.
 	//
 	// Open it once and let the cookie carry the session. Do not share it --
 	// whoever holds it holds the sandbox's capability.
-	browserURL, err := sandbox.Previews.BrowserURL(preview)
+	browserURL, err := sandbox.PreviewBrowserURL(preview)
 	if err != nil {
 		log.Fatal(err)
 	}

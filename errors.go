@@ -70,6 +70,12 @@ type SessionExistsError struct{ BaseError }
 // SessionNotFoundError indicates Sessions.Attach or Sessions.Kill named a session that does not exist.
 type SessionNotFoundError struct{ BaseError }
 
+// JobRunNotFoundError indicates GetJobRun or CancelJobRun named a run that does not exist.
+type JobRunNotFoundError struct{ BaseError }
+
+// JobScheduleNotFoundError indicates a job schedule call named a schedule that does not exist.
+type JobScheduleNotFoundError struct{ BaseError }
+
 // FilesystemError is a general filesystem failure.
 type FilesystemError struct{ BaseError }
 
@@ -123,6 +129,8 @@ type errorOptions struct {
 	execRPC        bool
 	filesystemRPC  bool
 	sessionRPC     bool
+	jobRPC         bool
+	jobScheduleRPC bool
 }
 
 // ErrorOption customizes MapRPCError's behavior.
@@ -150,6 +158,12 @@ func WithFilesystemRPC() ErrorOption { return func(o *errorOptions) { o.filesyst
 
 // WithSessionRPC marks the RPC being mapped as a managed-session call.
 func WithSessionRPC() ErrorOption { return func(o *errorOptions) { o.sessionRPC = true } }
+
+// WithJobRPC marks the RPC being mapped as a job run call.
+func WithJobRPC() ErrorOption { return func(o *errorOptions) { o.jobRPC = true } }
+
+// WithJobScheduleRPC marks the RPC being mapped as a job schedule call.
+func WithJobScheduleRPC() ErrorOption { return func(o *errorOptions) { o.jobScheduleRPC = true } }
 
 var filesystemCapabilityRejectionMessages = map[string]bool{
 	"filesystem capability rejected":                 true,
@@ -231,6 +245,10 @@ func MapRPCError(err error, secrets []string, opts ...ErrorOption) error {
 		return &RemoteFileNotFoundError{FilesystemError{base()}}
 	case code == codes.NotFound && cfg.sessionRPC:
 		return &SessionNotFoundError{base()}
+	case code == codes.NotFound && cfg.jobRPC:
+		return &JobRunNotFoundError{base()}
+	case code == codes.NotFound && cfg.jobScheduleRPC:
+		return &JobScheduleNotFoundError{base()}
 	case code == codes.NotFound:
 		return &SandboxNotFoundError{base()}
 	case code == codes.AlreadyExists && cfg.filesystemRPC:

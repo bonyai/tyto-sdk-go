@@ -29,7 +29,7 @@ func main() {
 	defer client.Close()
 
 	ctx := context.Background()
-	sandbox, err := client.Sandboxes.Create(ctx, "ubuntu-24.04")
+	sandbox, err := client.CreateSandbox(ctx, "bonya-dev")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -65,6 +65,10 @@ documented here is stable within `1.x`.
 - [Files](#files)
 - [Preview URLs](#preview-urls)
 - [Snapshots](#snapshots)
+- [Jobs](#jobs)
+- [Job schedules](#job-schedules)
+- [Templates](#templates)
+- [Organizations](#organizations-1)
 - [Error model](#error-model)
 - [Troubleshooting](#troubleshooting)
 - [Examples](#examples)
@@ -74,38 +78,41 @@ documented here is stable within `1.x`.
 
 | I want to… | Call |
 | --- | --- |
-| Start a sandbox | `client.Sandboxes.Create(ctx, template)` |
-| Reconnect to one | `client.Sandboxes.Get(ctx, id)` / `.GetByName(ctx, name)` |
-| Find my sandboxes | `client.Sandboxes.List(ctx)` |
+| Start a sandbox | `client.CreateSandbox(ctx, template)` |
+| Reconnect to one | `client.GetSandbox(ctx, id)` / `.GetByName(ctx, name)` |
+| Find my sandboxes | `client.ListSandboxes(ctx)` |
 | Run a command | `sandbox.Exec(ctx, cmd)` |
 | Watch output as it happens | `sandbox.ExecStream(ctx, cmd)` |
-| Keep a terminal alive across reconnects | `sandbox.Sessions.Create(...)` / `.Attach(...)` |
-| Read and write files | `sandbox.Files.Read/Write/Upload/Download/...` |
-| Expose a port to a browser | `sandbox.Previews.Create(ctx, port)` |
+| Keep a terminal alive across reconnects | `sandbox.CreateSession(...)` / `.Attach(...)` |
+| Read and write files | `sandbox.ReadFile/WriteFile/UploadFile/DownloadFile/...` |
+| Expose a port to a browser | `sandbox.CreatePreview(ctx, port)` |
 | Save state for later | `sandbox.Snapshot(ctx)` |
 | Pause and resume | suspend is automatic; `sandbox.Resume(ctx)` is explicit |
+| Run a job to completion | `client.RunJob(ctx, spec)` |
+| Start a job and check on it later | `client.StartJob(ctx, spec)` / `client.GetJobRun(ctx, runID)` |
+| Run something on a schedule | `client.CreateJobSchedule(ctx, schedule, spec)` |
 | See which organizations I belong to | `client.ListOrganizations(ctx)` |
 | Act in a specific organization | `client.SetOrganizationID(id)`, or `WithOrganizationID` at construction |
 
-Every sandbox operation on `client.Sandboxes` also has a flat form directly on
-`Client` — `client.CreateSandbox(ctx, template)`, `client.GetSandbox(ctx, id)`,
-`client.ListSandboxes(ctx)`, `client.DeleteSandbox(ctx, id)`,
-`client.ResumeSandbox(ctx, id)` — for callers who would rather call a verb than
-navigate a namespace. Both spellings are the same implementation; use
-whichever reads better at the call site.
+Every operation is a flat method: `client.CreateSandbox(ctx, template)`,
+`client.GetSandbox(ctx, id)`, `client.ListSandboxes(ctx)`,
+`client.DeleteSandbox(ctx, id)`, `client.ResumeSandbox(ctx, id)` on `Client`;
+`sandbox.CreateSession(...)`, `sandbox.AttachSession(...)`,
+`sandbox.CreatePreview(ctx, port)`, `sandbox.Snapshot(ctx)`, and the file
+methods (`ReadFile`, `WriteFile`, ...) directly on `*Sandbox`. There is no
+separate namespace to navigate.
 
-Sessions, previews, and snapshots have flat forms too —
-`client.CreateSession(ctx, sandboxID, name, cmd)`,
+Client-level convenience forms also exist for sandbox-scoped operations when
+all you have is an id — `client.CreateSession(ctx, sandboxID, name, cmd)`,
 `client.ListSessions(ctx, sandboxID)`, `client.KillSession(ctx, sandboxID, name)`,
 `client.AttachSession(ctx, sandboxID, name)`, `client.CreatePreview(ctx, sandboxID, port)`,
 `client.ListPreviews(ctx, sandboxID)`, `client.DeletePreview(ctx, sandboxID, id)`,
 `client.CreateSnapshot(ctx, sandboxID)`, `client.DeleteSnapshot(ctx, sandboxID, snapshotID)`
-— but unlike the sandbox-collection methods above, each of these needs a
-resolved `*Sandbox` to call through, so every one does a `GetSandbox` first and
-then delegates: one extra round trip compared to already holding the handle.
-Prefer `sandbox.Sessions.Create(...)` (or the equivalent) when a `*Sandbox` is
-already in hand, such as right after `CreateSandbox`; reach for the flat form
-when all you have is an id.
+— each does a `GetSandbox` first and then delegates to the `*Sandbox` method
+of the same name, which costs one extra round trip compared to already
+holding the handle. Prefer `sandbox.CreateSession(...)` (or the equivalent)
+directly when a `*Sandbox` is already in hand, such as right after
+`CreateSandbox`; reach for the client-level form when all you have is an id.
 
 ## Install
 
@@ -132,7 +139,6 @@ client, err := tyto.NewClient()
 | Option | Environment variable | Default |
 | --- | --- | --- |
 | `WithAPIKey` | `BONYA_API_KEY` | *required* |
-| `WithEndpoint` | `BONYA_ENDPOINT` | `https://api.tyto.run` |
 | `WithOrganizationID` | `BONYA_ORGANIZATION_ID` | your personal organization |
 | `WithCABundle` | `BONYA_CA_BUNDLE` | system trust store |
 | `WithTimeout` | — | `30 * time.Second` |
@@ -142,18 +148,12 @@ client, err := tyto.NewClient()
 ```go
 client, err := tyto.NewClient(
 	tyto.WithAPIKey(os.Getenv("BONYA_API_KEY")),
-	tyto.WithEndpoint("https://api.tyto.run"),
 	tyto.WithOrganizationID("org_123"),
 	tyto.WithTimeout(30*time.Second),
 )
 ```
 
 `WithAPIKey` (or `BONYA_API_KEY`) is required.
-
-`WithEndpoint` (or `BONYA_ENDPOINT`) must be an HTTPS URL. The SDK rejects
-non-HTTPS URLs, URLs with userinfo, query strings, fragments, malformed ports,
-or no host. Trailing slashes are normalized. Point it at your own deployment if
-you self-host.
 
 `WithCABundle` (or `BONYA_CA_BUNDLE`) points to a PEM bundle used for private
 development CAs. If the file cannot be read, `NewClient` returns an
@@ -171,7 +171,7 @@ for one capability refresh when the SDK can prove an exec capability token is
 expired before responses start. Filesystem calls are not retried on transport
 unavailability; they may refresh a rejected filesystem capability once.
 
-`WithFilesystemReadLimit` caps bytes buffered by `sandbox.Files.Read`. It must
+`WithFilesystemReadLimit` caps bytes buffered by `sandbox.ReadFile`. It must
 be non-negative and defaults to 64 MiB.
 
 Close clients when done:
@@ -215,7 +215,6 @@ naming one that does not exist.
 # .github/workflows/integration.yml
 env:
   BONYA_API_KEY: ${{ secrets.BONYA_API_KEY }}
-  BONYA_ENDPOINT: https://api.tyto.run
   BONYA_ORGANIZATION_ID: ${{ vars.BONYA_ORGANIZATION_ID }}
 ```
 
@@ -227,7 +226,7 @@ client, err := tyto.NewClient()
 ## Create Sandboxes
 
 ```go
-sandbox, err := client.Sandboxes.Create(ctx, "ubuntu-24.04", tyto.CreateOptions{
+sandbox, err := client.CreateSandbox(ctx, "bonya-dev", tyto.CreateOptions{
 	Wait:           tyto.WaitReady,
 	IdempotencyKey: "create-job-123",
 })
@@ -271,7 +270,7 @@ fmt.Println(sandbox.LastObservedStatus)
 Reconnect to an existing sandbox by ID:
 
 ```go
-sandbox, err := client.Sandboxes.Get(ctx, "sbx_123")
+sandbox, err := client.GetSandbox(ctx, "sbx_123")
 if err != nil {
 	log.Fatal(err)
 }
@@ -288,7 +287,7 @@ operation.
 List sandboxes, paging internally:
 
 ```go
-summaries, err := client.Sandboxes.List(ctx, tyto.ListOptions{
+summaries, err := client.ListSandboxes(ctx, tyto.ListOptions{
 	States: []tyto.Status{tyto.StatusRunning, tyto.StatusSuspended},
 	Limit:  20,
 })
@@ -332,7 +331,7 @@ Calling it again on the same `*Sandbox` is local and idempotent: the second
 call returns `AlreadyDeleted: true` without another RPC.
 
 ```go
-sandbox, err := client.Sandboxes.Create(ctx, "ubuntu-24.04")
+sandbox, err := client.CreateSandbox(ctx, "bonya-dev")
 if err != nil {
 	log.Fatal(err)
 }
@@ -559,18 +558,18 @@ TTY rules:
 
 ## Managed Console Sessions
 
-Every `*Sandbox` has `sandbox.Sessions`, a `*SandboxSessions` for named,
-persistent command sessions that outlive the client connection. This is
-different from `ExecStream`: an Exec process dies when its stream closes, but
-a managed session keeps running detached, and you can reattach later -- even
-after the sandbox warm-suspends and resumes -- and replay what it produced
-while nobody was watching.
+`CreateSession`, `ListSessions`, `KillSession`, and `AttachSession` are flat
+methods on `*Sandbox` for named, persistent command sessions that outlive the
+client connection. This is different from `ExecStream`: an Exec process dies
+when its stream closes, but a managed session keeps running detached, and you
+can reattach later -- even after the sandbox warm-suspends and resumes -- and
+replay what it produced while nobody was watching.
 
 ```go
-info, err := sandbox.Sessions.Create(ctx, "server", []string{"bash"}, tyto.CreateSessionOptions{Cols: 120, Rows: 40})
+info, err := sandbox.CreateSession(ctx, "server", []string{"bash"}, tyto.CreateSessionOptions{Cols: 120, Rows: 40})
 fmt.Println(info.Name, info.Status)
 
-stream, err := sandbox.Sessions.Attach(ctx, "server")
+stream, err := sandbox.AttachSession(ctx, "server")
 stream.Write([]byte("npm run dev\n"))
 stream.Resize(140, 45)
 for {
@@ -581,18 +580,18 @@ for {
 }
 stream.Detach()
 
-result, err := sandbox.Sessions.List(ctx)
+result, err := sandbox.ListSessions(ctx)
 for _, info := range result.Sessions {
 	fmt.Println(info.Name, info.Status)
 }
 
-sandbox.Sessions.Kill(ctx, "server")
+sandbox.KillSession(ctx, "server")
 ```
 
 ### Create
 
 ```go
-func (s *SandboxSessions) Create(ctx context.Context, name string, command []string, opts ...CreateSessionOptions) (SessionInfo, error)
+func (s *Sandbox) CreateSession(ctx context.Context, name string, command []string, opts ...CreateSessionOptions) (SessionInfo, error)
 ```
 
 `name` must match `^[a-z][a-z0-9-]{0,31}$`. `command` is a non-empty sequence
@@ -608,7 +607,7 @@ failed) is replaced. A running or attached session is never replaced by
 ### List
 
 ```go
-result, err := sandbox.Sessions.List(ctx)
+result, err := sandbox.ListSessions(ctx)
 for _, info := range result.Sessions {
 	fmt.Println(info.Name, info.Status)
 }
@@ -623,7 +622,7 @@ snapshot rather than the live guest.
 ### Attach
 
 ```go
-stream, err := sandbox.Sessions.Attach(ctx, "server", tyto.AttachOptions{Cols: 120, Rows: 40})
+stream, err := sandbox.AttachSession(ctx, "server", tyto.AttachOptions{Cols: 120, Rows: 40})
 fmt.Println(stream.Info.Name, stream.ReplayedBytes, stream.HistoryDropped)
 ```
 
@@ -664,7 +663,7 @@ the stream is still open -- call it via `defer`.
 ### Kill
 
 ```go
-sandbox.Sessions.Kill(ctx, "server", tyto.KillOptions{Signal: "TERM", GraceMS: 5000})
+sandbox.KillSession(ctx, "server", tyto.KillOptions{Signal: "TERM", GraceMS: 5000})
 ```
 
 Signals the session's process group (default `TERM`), escalating to
@@ -695,74 +694,75 @@ info.Exit                // *Exit, non-nil only once terminal
 ### Capability refresh
 
 Session calls transparently reissue an expired capability and retry once, the
-same way `ExecStream` and `sandbox.Files` do. Call `sandbox.ReissueCapability`
-directly only if you manage tokens yourself.
+same way `ExecStream` and the file methods (`ReadFile`, `WriteFile`, ...) do.
+Call `sandbox.ReissueCapability` directly only if you manage tokens yourself.
 
 ## Files
 
-Every `*Sandbox` has `sandbox.Files`, a `*SandboxFiles`:
+File operations are flat methods directly on `*Sandbox`:
 
 ```go
-sandbox.Files.Write(ctx, "/workspace/message.txt", []byte("hello\n"))
-payload, err := sandbox.Files.Read(ctx, "/workspace/message.txt")
+sandbox.WriteFile(ctx, "/workspace/message.txt", []byte("hello\n"))
+payload, err := sandbox.ReadFile(ctx, "/workspace/message.txt")
 
-sandbox.Files.Upload(ctx, "local-input.bin", "/workspace/input.bin")
-sandbox.Files.Download(ctx, "/workspace/input.bin", "local-output.bin")
+sandbox.UploadFile(ctx, "local-input.bin", "/workspace/input.bin")
+sandbox.DownloadFile(ctx, "/workspace/input.bin", "local-output.bin")
 
-entries, err := sandbox.Files.List(ctx, "/workspace")
-info, err := sandbox.Files.Stat(ctx, "/workspace/message.txt")
+entries, err := sandbox.ListFiles(ctx, "/workspace")
+info, err := sandbox.StatFile(ctx, "/workspace/message.txt")
 
-sandbox.Files.Mkdir(ctx, "/workspace/output")
-sandbox.Files.Move(ctx, "/workspace/message.txt", "/workspace/output/message.txt")
-sandbox.Files.Remove(ctx, "/workspace/output", true) // recursive
+sandbox.MkdirFile(ctx, "/workspace/output")
+sandbox.MoveFile(ctx, "/workspace/message.txt", "/workspace/output/message.txt")
+sandbox.RemoveFile(ctx, "/workspace/output", true) // recursive
 ```
 
 Methods:
 
-- `Read(ctx, path) ([]byte, error)`
-- `Write(ctx, path, data []byte) error`
-- `Upload(ctx, localPath, remotePath string) error`
-- `Download(ctx, remotePath, localPath string) error`
-- `List(ctx, path) ([]FileInfo, error)`
-- `Stat(ctx, path) (FileInfo, error)`
-- `Mkdir(ctx, path) error`
-- `Remove(ctx, path string, recursive bool) error`
-- `Move(ctx, source, destination string) error`
+- `ReadFile(ctx, path) ([]byte, error)`
+- `WriteFile(ctx, path, data []byte) error`
+- `UploadFile(ctx, localPath, remotePath string) error`
+- `DownloadFile(ctx, remotePath, localPath string) error`
+- `ListFiles(ctx, path) ([]FileInfo, error)`
+- `StatFile(ctx, path) (FileInfo, error)`
+- `MkdirFile(ctx, path) error`
+- `RemoveFile(ctx, path string, recursive bool) error`
+- `MoveFile(ctx, source, destination string) error`
 
 Remote paths must be non-empty strings without NUL. The SDK accepts absolute
 or relative remote paths and leaves interpretation to the guest runtime.
 
-`Read` buffers the entire remote file in memory and returns bytes. It returns
-`*FilesystemLimitError` before exceeding `filesystem_read_limit`.
+`ReadFile` buffers the entire remote file in memory and returns bytes. It
+returns `*FilesystemLimitError` before exceeding `filesystem_read_limit`.
 
-`Write` streams the payload in 64 KiB chunks, writes through a guest-side
+`WriteFile` streams the payload in 64 KiB chunks, writes through a guest-side
 temporary file, and publishes it by replacing the final directory entry. The
 final path is not followed when it is a symlink.
 
-`Upload` streams a local file to the remote path in 64 KiB chunks. `Download`
-streams a remote file into a hidden temporary file in the destination
-directory, fsyncs it, atomically replaces the destination with `os.Rename`,
-and fsyncs the parent directory. If a read or write error happens before
-replacement, the temporary file is removed and the previous destination is
-left unchanged.
+`UploadFile` streams a local file to the remote path in 64 KiB chunks.
+`DownloadFile` streams a remote file into a hidden temporary file in the
+destination directory, fsyncs it, atomically replaces the destination with
+`os.Rename`, and fsyncs the parent directory. If a read or write error
+happens before replacement, the temporary file is removed and the previous
+destination is left unchanged.
 
-`List` returns immediate children sorted by name. It returns a complete slice
-or an error; it does not return partial results after a remote listing error.
+`ListFiles` returns immediate children sorted by name. It returns a complete
+slice or an error; it does not return partial results after a remote listing
+error.
 
-`Stat` returns lstat-style metadata. A final symlink is reported as a symlink
-rather than followed.
+`StatFile` returns lstat-style metadata. A final symlink is reported as a
+symlink rather than followed.
 
-`Move` is same-filesystem, atomic, and no-overwrite. Cross-filesystem moves
-return `*CrossFilesystemMoveError`; destination-exists errors return
+`MoveFile` is same-filesystem, atomic, and no-overwrite. Cross-filesystem
+moves return `*CrossFilesystemMoveError`; destination-exists errors return
 `*RemoteFileExistsError`.
 
-`Remove(ctx, path, true)` removes directories recursively. Recursive remove
-does not follow symlinks and is not atomic.
+`RemoveFile(ctx, path, true)` removes directories recursively. Recursive
+remove does not follow symlinks and is not atomic.
 
 `FileInfo` fields:
 
 ```go
-info, err := sandbox.Files.Stat(ctx, "/workspace/output/message.txt")
+info, err := sandbox.StatFile(ctx, "/workspace/output/message.txt")
 fmt.Println(info.Path)
 fmt.Println(info.Name)
 fmt.Println(info.Kind == tyto.FileKindFile)
@@ -780,23 +780,23 @@ A preview publishes one guest port at an HTTPS URL a browser can open. The
 server must bind a port in 1024-65535; privileged ports are never previewable.
 
 ```go
-preview, err := sandbox.Previews.Create(ctx, 3000, tyto.CreatePreviewOptions{Name: "web"})
+preview, err := sandbox.CreatePreview(ctx, 3000, tyto.CreatePreviewOptions{Name: "web"})
 fmt.Println(preview.URL) // https://pv-<26 chars>.preview.tyto.run
 
-previews, err := sandbox.Previews.List(ctx)
-err = sandbox.Previews.Delete(ctx, preview.ID)
+previews, err := sandbox.ListPreviews(ctx)
+err = sandbox.DeletePreview(ctx, preview.ID)
 ```
 
 ### Opening one in a browser
 
 A token-mode preview needs the sandbox's capability, and a URL is not a safe
-place to leave one. `BrowserURL` produces a single-use entry point: the
+place to leave one. `PreviewBrowserURL` produces a single-use entry point: the
 gateway validates the token, trades it for a host-scoped `HttpOnly` cookie,
 and redirects to the same address without it, so no page is ever rendered at a
 URL containing the credential.
 
 ```go
-url, err := sandbox.Previews.BrowserURL(preview)
+url, err := sandbox.PreviewBrowserURL(preview)
 // open url in a browser
 ```
 
@@ -807,7 +807,7 @@ expires. It errors on a public preview, which has no token to exchange.
 ### Public previews
 
 ```go
-public, err := sandbox.Previews.Create(ctx, 8080, tyto.CreatePreviewOptions{Auth: tyto.PreviewAuthPublic})
+public, err := sandbox.CreatePreview(ctx, 8080, tyto.CreatePreviewOptions{Auth: tyto.PreviewAuthPublic})
 ```
 
 `PreviewAuthPublic` means exactly that: anyone with the URL reaches the
@@ -853,6 +853,108 @@ return `*SandboxFailedError`; suspended sandboxes return
 `snapshot.Delete(ctx)` returns `nil` and is idempotent on the same `*Snapshot`.
 Snapshots can be deleted after deleting the source sandbox handle.
 
+## Jobs
+
+A job is a managed run of a command or script — on a new sandbox (created and,
+by default, deleted for you) or an existing one.
+
+```go
+run, err := client.RunJob(ctx, tyto.JobSpec{
+	NewSandbox: &tyto.JobSandboxSpec{Template: "bonya-dev"},
+	Cmd:        []string{"./run-tests.sh"},
+})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(run.Status, run.Result.ExitCode)
+```
+
+`RunJob` blocks until the run finishes, bounded by the client's own timeout —
+use it for short jobs. `StartJob` returns immediately with a run id instead:
+
+```go
+runID, alreadyRunning, err := client.StartJob(ctx, tyto.JobSpec{
+	ExistingSandboxID: "sbx-123",
+	Cmd:               []string{"./long-migration.sh"},
+})
+// ... later ...
+detail, err := client.GetJobRun(ctx, runID)
+fmt.Println(detail.Status, detail.Spec, detail.Timeline)
+```
+
+`JobSpec` requires exactly one of `ExistingSandboxID`/`NewSandbox`, and exactly
+one of `Cmd`/`Script`. `Disposition` (`tyto.DispositionDelete`, the default, or
+`tyto.DispositionKeep`) controls what happens to a sandbox the job itself
+created once the run ends; it's not meaningful for `ExistingSandboxID`.
+
+`GetJobRun` returns `*JobRunDetail`, which adds the stored `Spec` and an
+activity `Timeline` to the run summary `ListJobRuns` returns. There is no
+endpoint to edit a run in place: to "edit and rerun" one, fetch it with
+`GetJobRun`, change what you need on its `Spec`, and pass that to `RunJob` or
+`StartJob` as a new run.
+
+```go
+runs, err := client.ListJobRuns(ctx, tyto.ListJobRunsOptions{SandboxID: "sbx-123"})
+err = client.CancelJobRun(ctx, runID) // requests cancellation; cleanup still runs
+```
+
+`CancelJobRun` cancels rather than terminates, so the run's own cleanup (e.g.
+deleting a sandbox it created) still executes.
+
+## Job Schedules
+
+A schedule wraps a `JobSpec` with timing — cron, interval, or a one-shot
+future time — so it runs without you calling `RunJob` yourself.
+
+```go
+schedule, err := client.CreateJobSchedule(ctx,
+	tyto.ScheduleSpec{IntervalSeconds: 3600},
+	tyto.JobSpec{
+		NewSandbox: &tyto.JobSandboxSpec{Template: "bonya-dev"},
+		Cmd:        []string{"./nightly-report.sh"},
+	},
+)
+fmt.Println(schedule.ScheduleID, schedule.NextRunAtUnixNanos)
+```
+
+`ScheduleSpec` requires exactly one of `CronExpressions`, `IntervalSeconds`,
+and `RunAtUnixNanos` (a one-shot: a single future calendar time, refused if in
+the past). `Overlap` (default `tyto.ScheduleOverlapSkip`) controls what a fire
+does when the previous run from the same schedule is still going.
+
+```go
+schedules, err := client.ListJobSchedules(ctx)
+schedule, err = client.GetJobSchedule(ctx, scheduleID)
+
+// UpdateJobSchedule replaces the whole schedule -- pass every field you
+// want to keep, not just the one you're changing.
+schedule, err = client.UpdateJobSchedule(ctx, scheduleID,
+	tyto.ScheduleSpec{IntervalSeconds: 7200}, jobSpec)
+
+schedule, err = client.SetJobSchedulePaused(ctx, scheduleID, true, "pausing for maintenance")
+err = client.TriggerJobSchedule(ctx, scheduleID) // fires one run now, ignoring timing
+err = client.DeleteJobSchedule(ctx, scheduleID)
+```
+
+`JobSchedule.RecentRunIDs` holds the last 10 fires' run ids (oldest first,
+including manual triggers), each a valid `GetJobRun` id — so you can follow a
+schedule straight to its recent runs without a separate `ListJobRuns` call.
+
+## Templates
+
+```go
+templates, err := client.ListTemplates(ctx)
+for _, template := range templates {
+	fmt.Println(template.ID, template.Version, template.IsDefault, template.Metadata.OS)
+}
+```
+
+Lists every `template_id`/version `Sandboxes.Create` and `RunJob` will
+accept, with metadata (OS, installed language stacks, which AI agent CLIs
+are preinstalled) to help pick one. Not paginated: the catalog is the same
+for every caller. `Sandboxes.Create`'s `template` argument may be empty to
+use the deployment's configured default template, if it has one.
+
 ## Organizations
 
 An api key belongs to a user, not a single organization, so one key works
@@ -889,7 +991,7 @@ All SDK errors embed `BaseError` and expose `Message()`, `SandboxID`,
 `OperationID`, and `IdempotencyKey`. Use `errors.As` to match a specific type:
 
 ```go
-sandbox, err := client.Sandboxes.Get(ctx, "sbx_missing")
+sandbox, err := client.GetSandbox(ctx, "sbx_missing")
 var notFound *tyto.SandboxNotFoundError
 if errors.As(err, &notFound) {
 	fmt.Println("sandbox does not exist or is not visible")
@@ -915,6 +1017,10 @@ Public error types:
   terminal.
 - `*SessionNotFoundError`: `Sessions.Attach` or `Sessions.Kill` named a
   session that does not exist.
+- `*JobRunNotFoundError`: `GetJobRun` or `CancelJobRun` named a run that does
+  not exist.
+- `*JobScheduleNotFoundError`: a job schedule call named a schedule that does
+  not exist.
 - `*FilesystemError`: general filesystem failure.
 - `*RemoteFileNotFoundError`: remote file or directory missing (embeds
   `FilesystemError`; `errors.As(err, &fsErr)` also matches).
@@ -934,7 +1040,7 @@ service messages.
 Examples:
 
 ```go
-_, err := client.Sandboxes.Get(ctx, "sbx_123")
+_, err := client.GetSandbox(ctx, "sbx_123")
 var authErr *tyto.AuthenticationError
 var notFoundErr *tyto.SandboxNotFoundError
 switch {
@@ -946,7 +1052,7 @@ case errors.As(err, &notFoundErr):
 ```
 
 ```go
-_, err := sandbox.Files.Read(ctx, "/workspace/missing.txt")
+_, err := sandbox.ReadFile(ctx, "/workspace/missing.txt")
 var notFound *tyto.RemoteFileNotFoundError
 var fsErr *tyto.FilesystemError
 switch {
@@ -970,13 +1076,13 @@ if errors.As(err, &timeoutErr) {
 Go has no context-manager protocol, so use `defer` for deterministic cleanup:
 
 ```go
-client, err := tyto.NewClient(tyto.WithAPIKey("BONYA_API_KEY"), tyto.WithEndpoint("https://api.tyto.run"))
+client, err := tyto.NewClient(tyto.WithAPIKey(os.Getenv("BONYA_API_KEY")))
 if err != nil {
 	log.Fatal(err)
 }
 defer client.Close()
 
-sandbox, err := client.Sandboxes.Create(ctx, "ubuntu-24.04")
+sandbox, err := client.CreateSandbox(ctx, "bonya-dev")
 if err != nil {
 	log.Fatal(err)
 }
@@ -1004,7 +1110,7 @@ Ownership rules:
 
 For intentionally persistent sandboxes, do not `defer sandbox.Delete(ctx)`.
 Store `sandbox.ID`, close the client, and reconnect later with
-`client.Sandboxes.Get`.
+`client.GetSandbox`.
 
 ## Current Limitations
 
@@ -1019,7 +1125,7 @@ idiom:
   the previous one.
 - `SandboxSummary` values are metadata only and cannot run Exec.
 - Buffered Exec stores stdout and stderr in memory.
-- `sandbox.Files.Read()` stores the full file in memory up to
+- `sandbox.ReadFile()` stores the full file in memory up to
   `filesystem_read_limit`.
 - Filesystem writes, uploads, moves, mkdir, and removes are not retried after
   ambiguous transport errors.
@@ -1041,13 +1147,7 @@ export BONYA_API_KEY=byk_...
 ```
 
 **`*AuthenticationError`**
-The key reached the server and was rejected. It may be revoked, or belong to a
-different deployment than `BONYA_ENDPOINT` points at.
-
-**`*InvalidRequestError: endpoint must use https`**
-The endpoint is validated before any connection is attempted. `http://` URLs,
-bare hostnames, and URLs carrying userinfo, a query string, or a fragment are
-all rejected. `https://api.tyto.run` is the shape to match.
+The key reached the server and was rejected. It may be revoked.
 
 **`*InvalidRequestError: organization_id must be a non-empty string`**
 `BONYA_ORGANIZATION_ID` is set but empty — usually an unset variable expanded in
@@ -1069,9 +1169,9 @@ original creation rather than starting a second sandbox.
 Point `tyto.WithCABundle(...)` (or `BONYA_CA_BUNDLE`) at the PEM bundle for your
 CA.
 
-**`*FilesystemLimitError` from `Files.Read`**
+**`*FilesystemLimitError` from `ReadFile`**
 The file is larger than the filesystem read limit (64 MiB by default). Raise it
-with `tyto.WithFilesystemReadLimit(...)`, or use `Files.Download`, which streams
+with `tyto.WithFilesystemReadLimit(...)`, or use `DownloadFile`, which streams
 to disk instead of buffering.
 
 **A command hangs**

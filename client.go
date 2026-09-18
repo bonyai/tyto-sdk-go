@@ -36,9 +36,6 @@ type Client struct {
 	closed   bool
 	channels map[string]*grpc.ClientConn
 	creds    credentials.TransportCredentials
-
-	// Sandboxes is the entry point for creating, fetching, and listing sandboxes.
-	Sandboxes *SandboxCollection
 }
 
 // Option configures a Client constructed by NewClient.
@@ -154,7 +151,6 @@ func NewClient(opts ...Option) (*Client, error) {
 		channels:            make(map[string]*grpc.ClientConn),
 		creds:               creds,
 	}
-	client.Sandboxes = &SandboxCollection{client: client}
 	return client, nil
 }
 

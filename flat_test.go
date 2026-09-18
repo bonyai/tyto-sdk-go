@@ -5,34 +5,25 @@ import (
 	"testing"
 )
 
-// TestFlatSandboxMethodsDelegateToTheCollection proves the two spellings
-// reach the same sandbox: a flat CreateSandbox followed by the namespaced
-// Sandboxes.Get (and vice versa for the other operations) must agree,
-// because both are backed by exactly one implementation.
-func TestFlatSandboxMethodsDelegateToTheCollection(t *testing.T) {
+// TestFlatSandboxMethods exercises the flat, client-level sandbox
+// operations end to end: create, get, get-by-name, and list must all agree
+// on the same sandbox.
+func TestFlatSandboxMethods(t *testing.T) {
 	fake := &fakeTApi{createdName: "flat-test"}
 	client := newBufconnClient(t, fake)
 	ctx := context.Background()
 
-	created, err := client.CreateSandbox(ctx, "ubuntu-24.04")
+	created, err := client.CreateSandbox(ctx, "bonya-dev")
 	if err != nil {
 		t.Fatalf("CreateSandbox: %v", err)
 	}
 
-	viaNamespace, err := client.Sandboxes.Get(ctx, created.ID)
-	if err != nil {
-		t.Fatalf("Sandboxes.Get: %v", err)
-	}
-	if viaNamespace.ID != created.ID {
-		t.Fatalf("Sandboxes.Get(%q).ID = %q, want %q", created.ID, viaNamespace.ID, created.ID)
-	}
-
-	viaFlat, err := client.GetSandbox(ctx, created.ID)
+	viaGet, err := client.GetSandbox(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("GetSandbox: %v", err)
 	}
-	if viaFlat.ID != created.ID {
-		t.Fatalf("GetSandbox(%q).ID = %q, want %q", created.ID, viaFlat.ID, created.ID)
+	if viaGet.ID != created.ID {
+		t.Fatalf("GetSandbox(%q).ID = %q, want %q", created.ID, viaGet.ID, created.ID)
 	}
 
 	byName, err := client.GetSandboxByName(ctx, "flat-test")
@@ -78,19 +69,18 @@ func TestFlatResumeSandboxDoesNotRequireAHandle(t *testing.T) {
 	}
 }
 
-// TestSandboxResumeStillRefreshesTheHandle guards the refactor that made
-// Sandbox.Resume delegate to SandboxCollection.resumeSandbox: the shared
-// implementation must still hand back the raw response so the handle-aware
-// caller can update its own capability and exec endpoint, which ResumeResult
-// itself does not carry.
+// TestSandboxResumeStillRefreshesTheHandle guards the fact that
+// Sandbox.Resume delegates to Client.resumeSandbox but still hands back the
+// raw response so the handle-aware caller can update its own capability and
+// exec endpoint, which ResumeResult itself does not carry.
 func TestSandboxResumeStillRefreshesTheHandle(t *testing.T) {
 	fake := &fakeTApi{}
 	client := newBufconnClient(t, fake)
 	ctx := context.Background()
 
-	sandbox, err := client.Sandboxes.Create(ctx, "ubuntu-24.04")
+	sandbox, err := client.CreateSandbox(ctx, "bonya-dev")
 	if err != nil {
-		t.Fatalf("Create: %v", err)
+		t.Fatalf("CreateSandbox: %v", err)
 	}
 	sandbox.LastObservedStatus = StatusSuspended
 
@@ -102,18 +92,18 @@ func TestSandboxResumeStillRefreshesTheHandle(t *testing.T) {
 	}
 }
 
-// TestSandboxDeleteStillShortCircuitsLocally guards the refactor that made
-// Sandbox.Delete delegate to SandboxCollection.Delete: a second call on the
+// TestSandboxDeleteStillShortCircuitsLocally guards the fact that
+// Sandbox.Delete delegates to Client.DeleteSandbox: a second call on the
 // same handle must remain a local no-op, since only the handle -- not the
-// collection-level flat form -- can know it already deleted this sandbox.
+// client-level flat form -- can know it already deleted this sandbox.
 func TestSandboxDeleteStillShortCircuitsLocally(t *testing.T) {
 	fake := &fakeTApi{}
 	client := newBufconnClient(t, fake)
 	ctx := context.Background()
 
-	sandbox, err := client.Sandboxes.Create(ctx, "ubuntu-24.04")
+	sandbox, err := client.CreateSandbox(ctx, "bonya-dev")
 	if err != nil {
-		t.Fatalf("Create: %v", err)
+		t.Fatalf("CreateSandbox: %v", err)
 	}
 
 	if _, err := sandbox.Delete(ctx); err != nil {

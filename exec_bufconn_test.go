@@ -23,6 +23,8 @@ type fakeGuest struct {
 	runtimev1grpc.UnimplementedGuestServiceServer
 	attachDelay          time.Duration
 	attachOutputInterval time.Duration
+	// files backs the file-transfer RPCs implemented in files_bufconn_test.go.
+	files map[string]fakeFile
 }
 
 func (f *fakeGuest) Exec(stream runtimev1grpc.GuestService_ExecServer) error {
@@ -138,7 +140,7 @@ func newBufconnSandbox(t *testing.T, guest *fakeGuest) *Sandbox {
 	return newSandbox(client, sandboxCreateArgs{
 		sandboxID:    "sbx-1",
 		operationID:  "op-1",
-		template:     "ubuntu-24.04",
+		template:     "bonya-dev",
 		status:       StatusRunning,
 		execEndpoint: "https://guest-exec.test",
 		capability:   "fake.capability.jws",
@@ -208,7 +210,7 @@ func TestSessionAttachOutlivesClientOperationTimeout(t *testing.T) {
 	sandbox := newBufconnSandbox(t, &fakeGuest{attachDelay: 60 * time.Millisecond})
 	sandbox.client.timeout = 20 * time.Millisecond
 
-	stream, err := sandbox.Sessions.Attach(context.Background(), "console")
+	stream, err := sandbox.AttachSession(context.Background(), "console")
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -229,7 +231,7 @@ func TestSessionAttachOutlivesClientOperationTimeout(t *testing.T) {
 
 func TestSessionAttachIdleTimeout(t *testing.T) {
 	sandbox := newBufconnSandbox(t, &fakeGuest{attachDelay: time.Second})
-	stream, err := sandbox.Sessions.Attach(context.Background(), "console", AttachOptions{IdleTimeout: 50 * time.Millisecond})
+	stream, err := sandbox.AttachSession(context.Background(), "console", AttachOptions{IdleTimeout: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -258,7 +260,7 @@ func TestSessionAttachIdleTimeoutResetsOnClientActivity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sandbox := newBufconnSandbox(t, &fakeGuest{attachDelay: time.Second})
-			stream, err := sandbox.Sessions.Attach(context.Background(), "console", AttachOptions{IdleTimeout: 60 * time.Millisecond})
+			stream, err := sandbox.AttachSession(context.Background(), "console", AttachOptions{IdleTimeout: 60 * time.Millisecond})
 			if err != nil {
 				t.Fatalf("Attach: %v", err)
 			}
@@ -285,7 +287,7 @@ func TestSessionAttachIdleTimeoutDoesNotResetOnOutput(t *testing.T) {
 		attachDelay:          time.Second,
 		attachOutputInterval: 10 * time.Millisecond,
 	})
-	stream, err := sandbox.Sessions.Attach(context.Background(), "console", AttachOptions{IdleTimeout: 60 * time.Millisecond})
+	stream, err := sandbox.AttachSession(context.Background(), "console", AttachOptions{IdleTimeout: 60 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -308,7 +310,7 @@ func TestSessionAttachIdleTimeoutDoesNotResetOnOutput(t *testing.T) {
 
 func TestSessionAttachRejectsNegativeIdleTimeout(t *testing.T) {
 	sandbox := newBufconnSandbox(t, &fakeGuest{})
-	_, err := sandbox.Sessions.Attach(context.Background(), "console", AttachOptions{IdleTimeout: -time.Second})
+	_, err := sandbox.AttachSession(context.Background(), "console", AttachOptions{IdleTimeout: -time.Second})
 	if err == nil || err.Error() != "idle_timeout must be a non-negative duration" {
 		t.Fatalf("Attach error = %v, want negative idle timeout validation", err)
 	}

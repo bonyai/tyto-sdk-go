@@ -26,11 +26,6 @@ type Sandbox struct {
 	// every operation on a sandbox is keyed by ID.
 	Name string
 
-	// Files, Sessions, and Previews are the dedicated RPC surfaces for this sandbox.
-	Files    *SandboxFiles
-	Sessions *SandboxSessions
-	Previews *SandboxPreviews
-
 	mu             sync.Mutex
 	execEndpoint   string
 	capability     string
@@ -66,9 +61,6 @@ func newSandbox(client *Client, args sandboxCreateArgs) *Sandbox {
 		failureCode:        args.failureCode,
 		failureMessage:     args.failureMessage,
 	}
-	s.Files = &SandboxFiles{sandbox: s}
-	s.Sessions = &SandboxSessions{sandbox: s}
-	s.Previews = &SandboxPreviews{sandbox: s}
 	return s
 }
 
@@ -254,7 +246,7 @@ func (s *Sandbox) ExecStream(ctx context.Context, command any, opts ...ExecOptio
 // Delete deletes the sandbox. It is idempotent: calling it again on the same
 // Sandbox is local and returns AlreadyDeleted=true without another RPC.
 //
-// The RPC itself is SandboxCollection.Delete; this adds the local
+// The RPC itself is Client.DeleteSandbox; this adds the local
 // already-deleted short-circuit and updates the handle's own status, which
 // only make sense with a handle to check and update.
 func (s *Sandbox) Delete(ctx context.Context) (*DeleteResult, error) {
@@ -265,7 +257,7 @@ func (s *Sandbox) Delete(ctx context.Context) (*DeleteResult, error) {
 	}
 	s.mu.Unlock()
 
-	result, err := s.client.Sandboxes.Delete(ctx, s.ID)
+	result, err := s.client.DeleteSandbox(ctx, s.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +340,7 @@ type ResumeOptions struct {
 
 // Resume explicitly resumes a suspended sandbox before running work.
 //
-// The RPC itself is SandboxCollection.resumeSandbox; this additionally
+// The RPC itself is Client.resumeSandbox; this additionally
 // copies the refreshed capability and exec endpoint onto the handle, which
 // only makes sense with a handle to update, and checks for a locally known
 // failed status before making a request the server would refuse anyway.
@@ -356,7 +348,7 @@ func (s *Sandbox) Resume(ctx context.Context, opts ...ResumeOptions) (*ResumeRes
 	if s.LastObservedStatus == StatusFailed {
 		return nil, s.failedError()
 	}
-	result, response, err := s.client.Sandboxes.resumeSandbox(ctx, s.ID, opts...)
+	result, response, err := s.client.resumeSandbox(ctx, s.ID, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +403,7 @@ func (s *Sandbox) ReissueCapability(ctx context.Context) error {
 // updated state (status, endpoint, capability) onto this handle. Used by
 // Files and Sessions after a capability rejection.
 func (s *Sandbox) refreshCapabilityOnce(ctx context.Context) error {
-	refreshed, err := s.client.Sandboxes.Get(ctx, s.ID)
+	refreshed, err := s.client.GetSandbox(ctx, s.ID)
 	if err != nil {
 		return err
 	}

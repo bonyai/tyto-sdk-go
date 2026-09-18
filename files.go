@@ -15,51 +15,45 @@ import (
 // transferChunkBytes is the chunk size used for streamed writes/uploads.
 const transferChunkBytes = 64 * 1024
 
-// SandboxFiles is the dedicated sandbox filesystem RPC surface. Read buffers
-// subject to the client's memory cap. Upload and Download stream in 64 KiB
-// chunks without a total transfer cap.
-type SandboxFiles struct {
-	sandbox *Sandbox
-}
-
-// Read buffers an entire remote file and returns its bytes. It errors with
-// *FilesystemLimitError before exceeding the client's filesystem read limit.
-func (f *SandboxFiles) Read(ctx context.Context, path string) ([]byte, error) {
+// ReadFile buffers an entire remote file and returns its bytes. It errors
+// with *FilesystemLimitError before exceeding the client's filesystem read
+// limit.
+func (s *Sandbox) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	path, err := validateRemotePath(path)
 	if err != nil {
 		return nil, err
 	}
 	var result []byte
-	err = f.withCapabilityRefresh(ctx, func(ctx context.Context) error {
-		client, err := f.guestClient()
+	err = s.withFileCapabilityRefresh(ctx, func(ctx context.Context) error {
+		client, err := s.guestFileClient()
 		if err != nil {
 			return err
 		}
-		callCtx, cancel, err := f.callContext(ctx)
+		callCtx, cancel, err := s.fileCallContext(ctx)
 		if err != nil {
 			return err
 		}
 		defer cancel()
-		stream, err := client.ReadFile(callCtx, &runtimev1.ReadFileRequest{SandboxId: f.sandbox.ID, Path: path})
+		stream, err := client.ReadFile(callCtx, &runtimev1.ReadFileRequest{SandboxId: s.ID, Path: path})
 		if err != nil {
-			return f.mapError(err)
+			return s.mapFileError(err)
 		}
 		var data []byte
-		limit := f.sandbox.client.filesystemReadLimit
+		limit := s.client.filesystemReadLimit
 		for {
 			resp, err := stream.Recv()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				return f.mapError(err)
+				return s.mapFileError(err)
 			}
 			chunk := resp.GetData()
 			if int64(len(data)+len(chunk)) > limit {
 				return &FilesystemLimitError{FilesystemError{BaseError{
 					Msg:         "filesystem read exceeded client memory limit",
-					SandboxID:   f.sandbox.ID,
-					OperationID: f.sandbox.OperationID,
+					SandboxID:   s.ID,
+					OperationID: s.OperationID,
 				}}}
 			}
 			data = append(data, chunk...)
@@ -73,14 +67,14 @@ func (f *SandboxFiles) Read(ctx context.Context, path string) ([]byte, error) {
 	return result, nil
 }
 
-// Write writes data to a remote path, streamed in 64 KiB chunks through a
-// guest-side temporary file and published atomically.
-func (f *SandboxFiles) Write(ctx context.Context, path string, data []byte) error {
+// WriteFile writes data to a remote path, streamed in 64 KiB chunks through
+// a guest-side temporary file and published atomically.
+func (s *Sandbox) WriteFile(ctx context.Context, path string, data []byte) error {
 	path, err := validateRemotePath(path)
 	if err != nil {
 		return err
 	}
-	return f.writeStream(ctx, path, func(send func([]byte) error) error {
+	return s.writeFileStream(ctx, path, func(send func([]byte) error) error {
 		for offset := 0; offset < len(data); offset += transferChunkBytes {
 			end := min(offset+transferChunkBytes, len(data))
 			if err := send(data[offset:end]); err != nil {
@@ -91,8 +85,8 @@ func (f *SandboxFiles) Write(ctx context.Context, path string, data []byte) erro
 	})
 }
 
-// Upload streams a local file to the remote path in 64 KiB chunks.
-func (f *SandboxFiles) Upload(ctx context.Context, localPath, remotePath string) error {
+// UploadFile streams a local file to the remote path in 64 KiB chunks.
+func (s *Sandbox) UploadFile(ctx context.Context, localPath, remotePath string) error {
 	remotePath, err := validateRemotePath(remotePath)
 	if err != nil {
 		return err
@@ -102,7 +96,7 @@ func (f *SandboxFiles) Upload(ctx context.Context, localPath, remotePath string)
 		return &InvalidRequestError{BaseError{Msg: "local file could not be read: " + err.Error()}}
 	}
 	defer file.Close()
-	return f.writeStream(ctx, remotePath, func(send func([]byte) error) error {
+	return s.writeFileStream(ctx, remotePath, func(send func([]byte) error) error {
 		buf := make([]byte, transferChunkBytes)
 		for {
 			n, readErr := file.Read(buf)
@@ -121,9 +115,9 @@ func (f *SandboxFiles) Upload(ctx context.Context, localPath, remotePath string)
 	})
 }
 
-// Download streams a remote file into a hidden temporary file in the
+// DownloadFile streams a remote file into a hidden temporary file in the
 // destination directory, fsyncs it, and atomically replaces the destination.
-func (f *SandboxFiles) Download(ctx context.Context, remotePath, localPath string) error {
+func (s *Sandbox) DownloadFile(ctx context.Context, remotePath, localPath string) error {
 	remotePath, err := validateRemotePath(remotePath)
 	if err != nil {
 		return err
@@ -143,19 +137,19 @@ func (f *SandboxFiles) Download(ctx context.Context, remotePath, localPath strin
 		}
 	}()
 
-	err = f.withCapabilityRefresh(ctx, func(ctx context.Context) error {
-		client, err := f.guestClient()
+	err = s.withFileCapabilityRefresh(ctx, func(ctx context.Context) error {
+		client, err := s.guestFileClient()
 		if err != nil {
 			return err
 		}
-		callCtx, cancel, err := f.callContext(ctx)
+		callCtx, cancel, err := s.fileCallContext(ctx)
 		if err != nil {
 			return err
 		}
 		defer cancel()
-		stream, err := client.ReadFile(callCtx, &runtimev1.ReadFileRequest{SandboxId: f.sandbox.ID, Path: remotePath})
+		stream, err := client.ReadFile(callCtx, &runtimev1.ReadFileRequest{SandboxId: s.ID, Path: remotePath})
 		if err != nil {
-			return f.mapError(err)
+			return s.mapFileError(err)
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 			return &InvalidRequestError{BaseError{Msg: err.Error()}}
@@ -169,7 +163,7 @@ func (f *SandboxFiles) Download(ctx context.Context, remotePath, localPath strin
 				break
 			}
 			if err != nil {
-				return f.mapError(err)
+				return s.mapFileError(err)
 			}
 			if _, err := tmp.Write(resp.GetData()); err != nil {
 				return &InvalidRequestError{BaseError{Msg: "temporary download file could not be written: " + err.Error()}}
@@ -195,26 +189,26 @@ func (f *SandboxFiles) Download(ctx context.Context, remotePath, localPath strin
 	return nil
 }
 
-// List returns immediate children of a remote directory, sorted by name.
-func (f *SandboxFiles) List(ctx context.Context, path string) ([]FileInfo, error) {
+// ListFiles returns immediate children of a remote directory, sorted by name.
+func (s *Sandbox) ListFiles(ctx context.Context, path string) ([]FileInfo, error) {
 	path, err := validateRemotePath(path)
 	if err != nil {
 		return nil, err
 	}
 	var result []FileInfo
-	err = f.withCapabilityRefresh(ctx, func(ctx context.Context) error {
-		client, err := f.guestClient()
+	err = s.withFileCapabilityRefresh(ctx, func(ctx context.Context) error {
+		client, err := s.guestFileClient()
 		if err != nil {
 			return err
 		}
-		callCtx, cancel, err := f.callContext(ctx)
+		callCtx, cancel, err := s.fileCallContext(ctx)
 		if err != nil {
 			return err
 		}
 		defer cancel()
-		stream, err := client.ListDirectory(callCtx, &runtimev1.ListDirectoryRequest{SandboxId: f.sandbox.ID, Path: path})
+		stream, err := client.ListDirectory(callCtx, &runtimev1.ListDirectoryRequest{SandboxId: s.ID, Path: path})
 		if err != nil {
-			return f.mapError(err)
+			return s.mapFileError(err)
 		}
 		var files []FileInfo
 		for {
@@ -223,7 +217,7 @@ func (f *SandboxFiles) List(ctx context.Context, path string) ([]FileInfo, error
 				break
 			}
 			if err != nil {
-				return f.mapError(err)
+				return s.mapFileError(err)
 			}
 			file := resp.GetFile()
 			if file == nil {
@@ -241,26 +235,26 @@ func (f *SandboxFiles) List(ctx context.Context, path string) ([]FileInfo, error
 	return result, nil
 }
 
-// Stat returns lstat-style metadata for a remote path.
-func (f *SandboxFiles) Stat(ctx context.Context, path string) (FileInfo, error) {
+// StatFile returns lstat-style metadata for a remote path.
+func (s *Sandbox) StatFile(ctx context.Context, path string) (FileInfo, error) {
 	path, err := validateRemotePath(path)
 	if err != nil {
 		return FileInfo{}, err
 	}
 	var result FileInfo
-	err = f.withCapabilityRefresh(ctx, func(ctx context.Context) error {
-		client, err := f.guestClient()
+	err = s.withFileCapabilityRefresh(ctx, func(ctx context.Context) error {
+		client, err := s.guestFileClient()
 		if err != nil {
 			return err
 		}
-		callCtx, cancel, err := f.callContext(ctx)
+		callCtx, cancel, err := s.fileCallContext(ctx)
 		if err != nil {
 			return err
 		}
 		defer cancel()
-		resp, err := client.StatFile(callCtx, &runtimev1.StatFileRequest{SandboxId: f.sandbox.ID, Path: path})
+		resp, err := client.StatFile(callCtx, &runtimev1.StatFileRequest{SandboxId: s.ID, Path: path})
 		if err != nil {
-			return f.mapError(err)
+			return s.mapFileError(err)
 		}
 		file := resp.GetFile()
 		if file == nil {
@@ -275,33 +269,33 @@ func (f *SandboxFiles) Stat(ctx context.Context, path string) (FileInfo, error) 
 	return result, nil
 }
 
-// Mkdir creates a remote directory.
-func (f *SandboxFiles) Mkdir(ctx context.Context, path string) error {
+// MkdirFile creates a remote directory.
+func (s *Sandbox) MkdirFile(ctx context.Context, path string) error {
 	path, err := validateRemotePath(path)
 	if err != nil {
 		return err
 	}
-	return f.unaryMutation(ctx, func(ctx context.Context, client runtimev1grpc.GuestServiceClient) error {
-		_, err := client.MakeDirectory(ctx, &runtimev1.MakeDirectoryRequest{SandboxId: f.sandbox.ID, Path: path})
+	return s.unaryFileMutation(ctx, func(ctx context.Context, client runtimev1grpc.GuestServiceClient) error {
+		_, err := client.MakeDirectory(ctx, &runtimev1.MakeDirectoryRequest{SandboxId: s.ID, Path: path})
 		return err
 	})
 }
 
-// Remove removes a remote path, recursively if recursive is true.
-func (f *SandboxFiles) Remove(ctx context.Context, path string, recursive bool) error {
+// RemoveFile removes a remote path, recursively if recursive is true.
+func (s *Sandbox) RemoveFile(ctx context.Context, path string, recursive bool) error {
 	path, err := validateRemotePath(path)
 	if err != nil {
 		return err
 	}
-	return f.unaryMutation(ctx, func(ctx context.Context, client runtimev1grpc.GuestServiceClient) error {
-		_, err := client.RemoveFile(ctx, &runtimev1.RemoveFileRequest{SandboxId: f.sandbox.ID, Path: path, Recursive: recursive})
+	return s.unaryFileMutation(ctx, func(ctx context.Context, client runtimev1grpc.GuestServiceClient) error {
+		_, err := client.RemoveFile(ctx, &runtimev1.RemoveFileRequest{SandboxId: s.ID, Path: path, Recursive: recursive})
 		return err
 	})
 }
 
-// Move moves a remote file or directory. It is same-filesystem, atomic, and
-// no-overwrite.
-func (f *SandboxFiles) Move(ctx context.Context, source, destination string) error {
+// MoveFile moves a remote file or directory. It is same-filesystem, atomic,
+// and no-overwrite.
+func (s *Sandbox) MoveFile(ctx context.Context, source, destination string) error {
 	source, err := validateRemotePath(source)
 	if err != nil {
 		return err
@@ -310,31 +304,31 @@ func (f *SandboxFiles) Move(ctx context.Context, source, destination string) err
 	if err != nil {
 		return err
 	}
-	return f.unaryMutation(ctx, func(ctx context.Context, client runtimev1grpc.GuestServiceClient) error {
-		_, err := client.MoveFile(ctx, &runtimev1.MoveFileRequest{SandboxId: f.sandbox.ID, SourcePath: source, DestinationPath: destination})
+	return s.unaryFileMutation(ctx, func(ctx context.Context, client runtimev1grpc.GuestServiceClient) error {
+		_, err := client.MoveFile(ctx, &runtimev1.MoveFileRequest{SandboxId: s.ID, SourcePath: source, DestinationPath: destination})
 		return err
 	})
 }
 
-func (f *SandboxFiles) writeStream(ctx context.Context, path string, produce func(send func([]byte) error) error) error {
-	return f.withCapabilityRefresh(ctx, func(ctx context.Context) error {
-		client, err := f.guestClient()
+func (s *Sandbox) writeFileStream(ctx context.Context, path string, produce func(send func([]byte) error) error) error {
+	return s.withFileCapabilityRefresh(ctx, func(ctx context.Context) error {
+		client, err := s.guestFileClient()
 		if err != nil {
 			return err
 		}
-		callCtx, cancel, err := f.callContext(ctx)
+		callCtx, cancel, err := s.fileCallContext(ctx)
 		if err != nil {
 			return err
 		}
 		defer cancel()
 		stream, err := client.WriteFile(callCtx)
 		if err != nil {
-			return f.mapError(err)
+			return s.mapFileError(err)
 		}
 		if err := stream.Send(&runtimev1.WriteFileRequest{
-			Frame: &runtimev1.WriteFileRequest_Start{Start: &runtimev1.WriteFileStart{SandboxId: f.sandbox.ID, Path: path}},
+			Frame: &runtimev1.WriteFileRequest_Start{Start: &runtimev1.WriteFileStart{SandboxId: s.ID, Path: path}},
 		}); err != nil {
-			return f.mapError(err)
+			return s.mapFileError(err)
 		}
 		sendErr := produce(func(chunk []byte) error {
 			return stream.Send(&runtimev1.WriteFileRequest{
@@ -343,35 +337,35 @@ func (f *SandboxFiles) writeStream(ctx context.Context, path string, produce fun
 		})
 		if sendErr != nil {
 			_, _ = stream.CloseAndRecv()
-			return f.mapError(sendErr)
+			return s.mapFileError(sendErr)
 		}
 		if _, err := stream.CloseAndRecv(); err != nil {
-			return f.mapError(err)
+			return s.mapFileError(err)
 		}
 		return nil
 	})
 }
 
-func (f *SandboxFiles) unaryMutation(ctx context.Context, call func(context.Context, runtimev1grpc.GuestServiceClient) error) error {
-	return f.withCapabilityRefresh(ctx, func(ctx context.Context) error {
-		client, err := f.guestClient()
+func (s *Sandbox) unaryFileMutation(ctx context.Context, call func(context.Context, runtimev1grpc.GuestServiceClient) error) error {
+	return s.withFileCapabilityRefresh(ctx, func(ctx context.Context) error {
+		client, err := s.guestFileClient()
 		if err != nil {
 			return err
 		}
-		callCtx, cancel, err := f.callContext(ctx)
+		callCtx, cancel, err := s.fileCallContext(ctx)
 		if err != nil {
 			return err
 		}
 		defer cancel()
 		if err := call(callCtx, client); err != nil {
-			return f.mapError(err)
+			return s.mapFileError(err)
 		}
 		return nil
 	})
 }
 
-func (f *SandboxFiles) withCapabilityRefresh(ctx context.Context, call func(context.Context) error) error {
-	if err := f.ensureFilesAllowed(); err != nil {
+func (s *Sandbox) withFileCapabilityRefresh(ctx context.Context, call func(context.Context) error) error {
+	if err := s.ensureFilesAllowed(); err != nil {
 		return err
 	}
 	err := call(ctx)
@@ -382,7 +376,7 @@ func (f *SandboxFiles) withCapabilityRefresh(ctx context.Context, call func(cont
 	if !asCapabilityRejected(err, &rejected) {
 		return err
 	}
-	if refreshErr := f.sandbox.refreshCapabilityOnce(ctx); refreshErr != nil {
+	if refreshErr := s.refreshCapabilityOnce(ctx); refreshErr != nil {
 		return refreshErr
 	}
 	return call(ctx)
@@ -396,40 +390,40 @@ func asCapabilityRejected(err error, target **CapabilityRejectedError) bool {
 	return false
 }
 
-func (f *SandboxFiles) ensureFilesAllowed() error {
-	if f.sandbox.isDeleted() {
-		return &SandboxDeletedError{BaseError{Msg: "sandbox has been deleted", SandboxID: f.sandbox.ID, OperationID: f.sandbox.OperationID}}
+func (s *Sandbox) ensureFilesAllowed() error {
+	if s.isDeleted() {
+		return &SandboxDeletedError{BaseError{Msg: "sandbox has been deleted", SandboxID: s.ID, OperationID: s.OperationID}}
 	}
-	if f.sandbox.LastObservedStatus == StatusFailed {
-		return f.sandbox.failedError()
+	if s.LastObservedStatus == StatusFailed {
+		return s.failedError()
 	}
 	return nil
 }
 
-func (f *SandboxFiles) guestClient() (runtimev1grpc.GuestServiceClient, error) {
-	execEndpoint, _ := f.sandbox.snapshotState()
-	return f.sandbox.client.guestClient(execEndpoint)
+func (s *Sandbox) guestFileClient() (runtimev1grpc.GuestServiceClient, error) {
+	execEndpoint, _ := s.snapshotState()
+	return s.client.guestClient(execEndpoint)
 }
 
-func (f *SandboxFiles) callContext(ctx context.Context) (context.Context, context.CancelFunc, error) {
-	remaining, err := startDeadlineRemaining(f.sandbox.client.timeout)
+func (s *Sandbox) fileCallContext(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	remaining, err := startDeadlineRemaining(s.client.timeout)
 	if err != nil {
 		return nil, nil, err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, remaining)
-	_, capability := f.sandbox.snapshotState()
-	callCtx = withOutgoingMetadata(callCtx, "bonya-sandbox-id", f.sandbox.ID, "bonya-exec-capability", capability)
+	_, capability := s.snapshotState()
+	callCtx = withOutgoingMetadata(callCtx, "bonya-sandbox-id", s.ID, "bonya-exec-capability", capability)
 	return callCtx, cancel, nil
 }
 
-func (f *SandboxFiles) mapError(err error) error {
-	_, capability := f.sandbox.snapshotState()
-	mapped := MapRPCError(err, f.sandbox.client.secrets(capability), WithSandboxID(f.sandbox.ID), WithOperationID(f.sandbox.OperationID), WithFilesystemRPC())
+func (s *Sandbox) mapFileError(err error) error {
+	_, capability := s.snapshotState()
+	mapped := MapRPCError(err, s.client.secrets(capability), WithSandboxID(s.ID), WithOperationID(s.OperationID), WithFilesystemRPC())
 	if _, ok := mapped.(*SandboxDeletedError); ok {
-		f.sandbox.mu.Lock()
-		f.sandbox.deleted = true
-		f.sandbox.LastObservedStatus = StatusDeleted
-		f.sandbox.mu.Unlock()
+		s.mu.Lock()
+		s.deleted = true
+		s.LastObservedStatus = StatusDeleted
+		s.mu.Unlock()
 	}
 	return mapped
 }

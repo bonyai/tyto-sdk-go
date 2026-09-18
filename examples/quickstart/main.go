@@ -24,7 +24,7 @@ func main() {
 
 	ctx := context.Background()
 
-	sandbox, err := client.CreateSandbox(ctx, "ubuntu-24.04")
+	sandbox, err := client.CreateSandbox(ctx, "bonya-dev")
 	if err != nil {
 		log.Fatal(err)
 	}

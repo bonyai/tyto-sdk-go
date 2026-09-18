@@ -10,7 +10,7 @@ import (
 func TestListTemplatesMapsFields(t *testing.T) {
 	fake := &fakeTApi{templates: []*runtimev1.TApiTemplate{
 		{
-			TemplateId: "ubuntu-24.04",
+			TemplateId: "bonya-dev",
 			Version:    "1",
 			Digest:     "sha256:aaa",
 			IsDefault:  true,
@@ -22,7 +22,7 @@ func TestListTemplatesMapsFields(t *testing.T) {
 				AgentCliSupport: []string{"codex"},
 			},
 		},
-		{TemplateId: "ubuntu-24.04", Version: "2", Digest: "sha256:bbb", IsDefault: false},
+		{TemplateId: "bonya-dev", Version: "2", Digest: "sha256:bbb", IsDefault: false},
 	}}
 	client := newBufconnClient(t, fake)
 
@@ -35,7 +35,7 @@ func TestListTemplatesMapsFields(t *testing.T) {
 	}
 
 	first := templates[0]
-	if first.ID != "ubuntu-24.04" || first.Version != "1" || first.Digest != "sha256:aaa" || !first.IsDefault {
+	if first.ID != "bonya-dev" || first.Version != "1" || first.Digest != "sha256:aaa" || !first.IsDefault {
 		t.Errorf("first template = %+v", first)
 	}
 	if first.Metadata.Description != "A development environment." || first.Metadata.OS != "ubuntu" ||
@@ -46,7 +46,7 @@ func TestListTemplatesMapsFields(t *testing.T) {
 	}
 
 	second := templates[1]
-	if second.ID != "ubuntu-24.04" || second.Version != "2" || second.IsDefault {
+	if second.ID != "bonya-dev" || second.Version != "2" || second.IsDefault {
 		t.Errorf("second template = %+v", second)
 	}
 }

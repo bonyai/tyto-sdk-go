@@ -24,13 +24,13 @@ func main() {
 
 	ctx := context.Background()
 
-	sandbox, err := client.CreateSandbox(ctx, "ubuntu-24.04", tyto.CreateOptions{Name: "snapshot-source"})
+	sandbox, err := client.CreateSandbox(ctx, "bonya-dev", tyto.CreateOptions{Name: "snapshot-source"})
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer sandbox.Delete(ctx)
 
-	if err := sandbox.Files.Write(ctx, "/workspace/state.txt", []byte("captured\n")); err != nil {
+	if err := sandbox.WriteFile(ctx, "/workspace/state.txt", []byte("captured\n")); err != nil {
 		log.Fatal(err)
 	}
 

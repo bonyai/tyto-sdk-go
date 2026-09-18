@@ -74,6 +74,151 @@ type fakeTApi struct {
 	// tests that also need a working guest connection point this at the
 	// same bufconn address the client's control-plane channel is dialed to.
 	execEndpoint string
+
+	// runJobCalls, startJobCalls, cancelJobRunCalls count their respective
+	// invocations. lastRunJobRequest/lastStartJobRequest/lastCreateScheduleRequest
+	// capture the most recent request for field-passthrough assertions.
+	runJobCalls         int
+	startJobCalls       int
+	cancelJobRunCalls   int
+	lastRunJobRequest   *runtimev1.TApiRunJobRequest
+	lastStartJobRequest *runtimev1.TApiStartJobRequest
+
+	// jobRun, when set, replaces RunJob's default response.
+	jobRun *runtimev1.TApiJobRun
+	// jobRunDetail, when set, replaces GetJobRun's default response.
+	jobRunDetail *runtimev1.TApiJobRunDetail
+	// jobRuns, when set, replaces ListJobRuns's default response.
+	jobRuns []*runtimev1.TApiJobRun
+
+	createJobScheduleCalls    int
+	lastCreateScheduleRequest *runtimev1.TApiCreateJobScheduleRequest
+	lastUpdateScheduleRequest *runtimev1.TApiUpdateJobScheduleRequest
+	// jobSchedule, when set, replaces the default single-schedule response.
+	jobSchedule *runtimev1.TApiJobSchedule
+	// jobSchedules, when set, replaces ListJobSchedules's default response.
+	jobSchedules []*runtimev1.TApiJobSchedule
+
+	// notFoundOnGetJobRun and notFoundOnGetJobSchedule, when true, make
+	// GetJobRun/GetJobSchedule return codes.NotFound.
+	notFoundOnGetJobRun      bool
+	notFoundOnGetJobSchedule bool
+}
+
+func (f *fakeTApi) RunJob(ctx context.Context, req *runtimev1.TApiRunJobRequest) (*runtimev1.TApiRunJobResponse, error) {
+	f.mu.Lock()
+	f.runJobCalls++
+	f.lastRunJobRequest = req
+	run := f.jobRun
+	f.mu.Unlock()
+	if run == nil {
+		run = &runtimev1.TApiJobRun{
+			RunId:  "run-1",
+			Status: runtimev1.TApiJobRunStatus_TAPI_JOB_RUN_STATUS_COMPLETED,
+			Result: &runtimev1.TApiJobResult{ExitCode: 0},
+		}
+	}
+	return &runtimev1.TApiRunJobResponse{Run: run}, nil
+}
+
+func (f *fakeTApi) StartJob(ctx context.Context, req *runtimev1.TApiStartJobRequest) (*runtimev1.TApiStartJobResponse, error) {
+	f.mu.Lock()
+	f.startJobCalls++
+	f.lastStartJobRequest = req
+	f.mu.Unlock()
+	return &runtimev1.TApiStartJobResponse{RunId: "run-1", AlreadyRunning: false}, nil
+}
+
+func (f *fakeTApi) GetJobRun(ctx context.Context, req *runtimev1.TApiGetJobRunRequest) (*runtimev1.TApiGetJobRunResponse, error) {
+	f.mu.Lock()
+	notFound := f.notFoundOnGetJobRun
+	detail := f.jobRunDetail
+	f.mu.Unlock()
+	if notFound {
+		return nil, status.Error(codes.NotFound, "run not found")
+	}
+	if detail == nil {
+		detail = &runtimev1.TApiJobRunDetail{
+			Run: &runtimev1.TApiJobRun{RunId: req.GetRunId(), Status: runtimev1.TApiJobRunStatus_TAPI_JOB_RUN_STATUS_COMPLETED},
+		}
+	}
+	return &runtimev1.TApiGetJobRunResponse{Detail: detail}, nil
+}
+
+func (f *fakeTApi) ListJobRuns(ctx context.Context, req *runtimev1.TApiListJobRunsRequest) (*runtimev1.TApiListJobRunsResponse, error) {
+	f.mu.Lock()
+	runs := f.jobRuns
+	f.mu.Unlock()
+	if runs == nil {
+		runs = []*runtimev1.TApiJobRun{{RunId: "run-1", Status: runtimev1.TApiJobRunStatus_TAPI_JOB_RUN_STATUS_COMPLETED}}
+	}
+	return &runtimev1.TApiListJobRunsResponse{Runs: runs}, nil
+}
+
+func (f *fakeTApi) CancelJobRun(ctx context.Context, req *runtimev1.TApiCancelJobRunRequest) (*runtimev1.TApiCancelJobRunResponse, error) {
+	f.mu.Lock()
+	f.cancelJobRunCalls++
+	f.mu.Unlock()
+	return &runtimev1.TApiCancelJobRunResponse{}, nil
+}
+
+func (f *fakeTApi) CreateJobSchedule(ctx context.Context, req *runtimev1.TApiCreateJobScheduleRequest) (*runtimev1.TApiCreateJobScheduleResponse, error) {
+	f.mu.Lock()
+	f.createJobScheduleCalls++
+	f.lastCreateScheduleRequest = req
+	schedule := f.jobSchedule
+	f.mu.Unlock()
+	if schedule == nil {
+		schedule = &runtimev1.TApiJobSchedule{ScheduleId: "sched-1", Schedule: req.GetSchedule(), Spec: req.GetSpec()}
+	}
+	return &runtimev1.TApiCreateJobScheduleResponse{Schedule: schedule}, nil
+}
+
+func (f *fakeTApi) GetJobSchedule(ctx context.Context, req *runtimev1.TApiGetJobScheduleRequest) (*runtimev1.TApiGetJobScheduleResponse, error) {
+	f.mu.Lock()
+	notFound := f.notFoundOnGetJobSchedule
+	schedule := f.jobSchedule
+	f.mu.Unlock()
+	if notFound {
+		return nil, status.Error(codes.NotFound, "schedule not found")
+	}
+	if schedule == nil {
+		schedule = &runtimev1.TApiJobSchedule{ScheduleId: req.GetScheduleId()}
+	}
+	return &runtimev1.TApiGetJobScheduleResponse{Schedule: schedule}, nil
+}
+
+func (f *fakeTApi) ListJobSchedules(ctx context.Context, req *runtimev1.TApiListJobSchedulesRequest) (*runtimev1.TApiListJobSchedulesResponse, error) {
+	f.mu.Lock()
+	schedules := f.jobSchedules
+	f.mu.Unlock()
+	if schedules == nil {
+		schedules = []*runtimev1.TApiJobSchedule{{ScheduleId: "sched-1"}}
+	}
+	return &runtimev1.TApiListJobSchedulesResponse{Schedules: schedules}, nil
+}
+
+func (f *fakeTApi) UpdateJobSchedule(ctx context.Context, req *runtimev1.TApiUpdateJobScheduleRequest) (*runtimev1.TApiUpdateJobScheduleResponse, error) {
+	f.mu.Lock()
+	f.lastUpdateScheduleRequest = req
+	f.mu.Unlock()
+	return &runtimev1.TApiUpdateJobScheduleResponse{
+		Schedule: &runtimev1.TApiJobSchedule{ScheduleId: req.GetScheduleId(), Schedule: req.GetSchedule(), Spec: req.GetSpec()},
+	}, nil
+}
+
+func (f *fakeTApi) SetJobSchedulePaused(ctx context.Context, req *runtimev1.TApiSetJobSchedulePausedRequest) (*runtimev1.TApiSetJobSchedulePausedResponse, error) {
+	return &runtimev1.TApiSetJobSchedulePausedResponse{
+		Schedule: &runtimev1.TApiJobSchedule{ScheduleId: req.GetScheduleId(), Paused: req.GetPaused(), Note: req.GetNote()},
+	}, nil
+}
+
+func (f *fakeTApi) TriggerJobSchedule(ctx context.Context, req *runtimev1.TApiTriggerJobScheduleRequest) (*runtimev1.TApiTriggerJobScheduleResponse, error) {
+	return &runtimev1.TApiTriggerJobScheduleResponse{}, nil
+}
+
+func (f *fakeTApi) DeleteJobSchedule(ctx context.Context, req *runtimev1.TApiDeleteJobScheduleRequest) (*runtimev1.TApiDeleteJobScheduleResponse, error) {
+	return &runtimev1.TApiDeleteJobScheduleResponse{}, nil
 }
 
 func (f *fakeTApi) Create(ctx context.Context, req *runtimev1.TApiServiceCreateRequest) (*runtimev1.TApiServiceCreateResponse, error) {
@@ -225,7 +370,7 @@ func (f *fakeTApi) ListTemplates(ctx context.Context, req *runtimev1.TApiListTem
 	f.mu.Unlock()
 	if templates == nil {
 		templates = []*runtimev1.TApiTemplate{
-			{TemplateId: "ubuntu-24.04", Version: "1", Digest: "sha256:default", IsDefault: true},
+			{TemplateId: "bonya-dev", Version: "1", Digest: "sha256:default", IsDefault: true},
 		}
 	}
 	return &runtimev1.TApiListTemplatesResponse{Templates: templates}, nil
@@ -342,7 +487,7 @@ func TestOrgContextHeaderInjectedWhenConfigured(t *testing.T) {
 	fake := &fakeTApi{}
 	client := newBufconnClient(t, fake, WithOrganizationID("org-123"))
 
-	_, err := client.Sandboxes.Create(context.Background(), "ubuntu-24.04")
+	_, err := client.CreateSandbox(context.Background(), "bonya-dev")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -368,7 +513,7 @@ func TestSetOrganizationIDAffectsAnAlreadyDialedChannel(t *testing.T) {
 	fake := &fakeTApi{}
 	client := newBufconnClient(t, fake, WithOrganizationID("org-before"))
 
-	if _, err := client.Sandboxes.Create(context.Background(), "ubuntu-24.04"); err != nil {
+	if _, err := client.CreateSandbox(context.Background(), "bonya-dev"); err != nil {
 		t.Fatalf("Create (before): %v", err)
 	}
 	fake.mu.Lock()
@@ -382,7 +527,7 @@ func TestSetOrganizationIDAffectsAnAlreadyDialedChannel(t *testing.T) {
 		t.Fatalf("SetOrganizationID: %v", err)
 	}
 
-	if _, err := client.Sandboxes.Create(context.Background(), "ubuntu-24.04"); err != nil {
+	if _, err := client.CreateSandbox(context.Background(), "bonya-dev"); err != nil {
 		t.Fatalf("Create (after): %v", err)
 	}
 	fake.mu.Lock()
@@ -410,7 +555,7 @@ func TestOrgContextHeaderAbsentWhenNotConfigured(t *testing.T) {
 	fake := &fakeTApi{}
 	client := newBufconnClient(t, fake)
 
-	_, err := client.Sandboxes.Create(context.Background(), "ubuntu-24.04")
+	_, err := client.CreateSandbox(context.Background(), "bonya-dev")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -429,7 +574,7 @@ func TestCreateRetriesOnUnavailableThenSucceeds(t *testing.T) {
 	fake := &fakeTApi{failuresRemaining: 2, failWithCode: codes.Unavailable}
 	client := newBufconnClient(t, fake, WithMaxRetries(2))
 
-	sandbox, err := client.Sandboxes.Create(context.Background(), "ubuntu-24.04")
+	sandbox, err := client.CreateSandbox(context.Background(), "bonya-dev")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -448,7 +593,7 @@ func TestCreateFailsAfterExhaustingRetries(t *testing.T) {
 	fake := &fakeTApi{failuresRemaining: 10, failWithCode: codes.Unavailable}
 	client := newBufconnClient(t, fake, WithMaxRetries(2))
 
-	_, err := client.Sandboxes.Create(context.Background(), "ubuntu-24.04")
+	_, err := client.CreateSandbox(context.Background(), "bonya-dev")
 	if err == nil {
 		t.Fatal("Create() = nil error, want an error after exhausting retries")
 	}
@@ -470,7 +615,7 @@ func TestGetDoesNotRetryOnNonRetryableCode(t *testing.T) {
 	fake := &fakeTApi{failuresRemaining: 1, failWithCode: codes.InvalidArgument}
 	client := newBufconnClient(t, fake, WithMaxRetries(2))
 
-	_, err := client.Sandboxes.Get(context.Background(), "sbx-1")
+	_, err := client.GetSandbox(context.Background(), "sbx-1")
 	if err == nil {
 		t.Fatal("Get() = nil error, want an error")
 	}
@@ -489,7 +634,7 @@ func TestListRetriesOnUnavailableThenSucceeds(t *testing.T) {
 	fake := &fakeTApi{failuresRemaining: 1, failWithCode: codes.Unavailable}
 	client := newBufconnClient(t, fake, WithMaxRetries(2))
 
-	summaries, err := client.Sandboxes.List(context.Background())
+	summaries, err := client.ListSandboxes(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -511,7 +656,7 @@ func runningMetadata(sandboxID, name string) *runtimev1.TApiSandboxMetadata {
 func TestCreateSendsNameAndReturnsIt(t *testing.T) {
 	fake := &fakeTApi{}
 	client := newBufconnClient(t, fake)
-	sandbox, err := client.Sandboxes.Create(context.Background(), "ubuntu", CreateOptions{Name: "my-box", Wait: WaitNone})
+	sandbox, err := client.CreateSandbox(context.Background(), "ubuntu", CreateOptions{Name: "my-box", Wait: WaitNone})
 	if err != nil {
 		t.Fatalf("Create error = %v", err)
 	}
@@ -528,7 +673,7 @@ func TestCreateSendsNameAndReturnsIt(t *testing.T) {
 func TestCreateSurfacesAGeneratedName(t *testing.T) {
 	fake := &fakeTApi{createdName: "brave-cedar-6268"}
 	client := newBufconnClient(t, fake)
-	sandbox, err := client.Sandboxes.Create(context.Background(), "ubuntu", CreateOptions{Wait: WaitNone})
+	sandbox, err := client.CreateSandbox(context.Background(), "ubuntu", CreateOptions{Wait: WaitNone})
 	if err != nil {
 		t.Fatalf("Create error = %v", err)
 	}
@@ -543,7 +688,7 @@ func TestCreateSurfacesAGeneratedName(t *testing.T) {
 func TestListPassesNameFilterAndReturnsNames(t *testing.T) {
 	fake := &fakeTApi{listSandboxes: []*runtimev1.TApiSandboxMetadata{runningMetadata("sbx-1", "my-box")}}
 	client := newBufconnClient(t, fake)
-	summaries, err := client.Sandboxes.List(context.Background(), ListOptions{Name: "my-box"})
+	summaries, err := client.ListSandboxes(context.Background(), ListOptions{Name: "my-box"})
 	if err != nil {
 		t.Fatalf("List error = %v", err)
 	}
@@ -565,7 +710,7 @@ func TestListLeavesMissingCreationTimeZero(t *testing.T) {
 	fake := &fakeTApi{listSandboxes: []*runtimev1.TApiSandboxMetadata{metadata}}
 	client := newBufconnClient(t, fake)
 
-	summaries, err := client.Sandboxes.List(context.Background())
+	summaries, err := client.ListSandboxes(context.Background())
 	if err != nil {
 		t.Fatalf("List error = %v", err)
 	}
@@ -577,7 +722,7 @@ func TestListLeavesMissingCreationTimeZero(t *testing.T) {
 func TestGetByNameResolvesToASandbox(t *testing.T) {
 	fake := &fakeTApi{listSandboxes: []*runtimev1.TApiSandboxMetadata{runningMetadata("sbx-42", "my-box")}}
 	client := newBufconnClient(t, fake)
-	sandbox, err := client.Sandboxes.GetByName(context.Background(), "my-box")
+	sandbox, err := client.GetSandboxByName(context.Background(), "my-box")
 	if err != nil {
 		t.Fatalf("GetByName error = %v", err)
 	}
@@ -593,7 +738,7 @@ func TestGetByNameResolvesToASandbox(t *testing.T) {
 func TestGetByNameReportsNoMatch(t *testing.T) {
 	fake := &fakeTApi{listSandboxes: []*runtimev1.TApiSandboxMetadata{}}
 	client := newBufconnClient(t, fake)
-	_, err := client.Sandboxes.GetByName(context.Background(), "absent")
+	_, err := client.GetSandboxByName(context.Background(), "absent")
 	var notFound *SandboxNotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("GetByName error = %v, want SandboxNotFoundError", err)
@@ -608,7 +753,7 @@ func TestGetByNameRefusesToGuessBetweenDuplicates(t *testing.T) {
 		runningMetadata("sbx-2", "shared"),
 	}}
 	client := newBufconnClient(t, fake)
-	_, err := client.Sandboxes.GetByName(context.Background(), "shared")
+	_, err := client.GetSandboxByName(context.Background(), "shared")
 	var invalid *InvalidRequestError
 	if !errors.As(err, &invalid) {
 		t.Fatalf("GetByName error = %v, want InvalidRequestError", err)
@@ -620,7 +765,7 @@ func TestGetByNameRefusesToGuessBetweenDuplicates(t *testing.T) {
 
 func TestGetByNameRequiresAName(t *testing.T) {
 	client := newBufconnClient(t, &fakeTApi{})
-	_, err := client.Sandboxes.GetByName(context.Background(), "")
+	_, err := client.GetSandboxByName(context.Background(), "")
 	var invalid *InvalidRequestError
 	if !errors.As(err, &invalid) {
 		t.Fatalf("GetByName error = %v, want InvalidRequestError", err)

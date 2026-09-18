@@ -10,12 +10,7 @@ import (
 	runtimev1 "buf.build/gen/go/bonya/tyto/protocolbuffers/go/tyto/runtime/v1"
 )
 
-// SandboxCollection is the entry point for creating, fetching, and listing sandboxes.
-type SandboxCollection struct {
-	client *Client
-}
-
-// CreateOptions configures SandboxCollection.Create.
+// CreateOptions configures Client.CreateSandbox.
 type CreateOptions struct {
 	// Version selects a template version. The server's default template
 	// version is used when empty.
@@ -31,11 +26,10 @@ type CreateOptions struct {
 	Name string
 }
 
-// Create starts a new sandbox from a template.
-func (s *SandboxCollection) Create(ctx context.Context, template string, opts ...CreateOptions) (*Sandbox, error) {
-	if template == "" {
-		return nil, &InvalidRequestError{BaseError{Msg: "template is required"}}
-	}
+// CreateSandbox starts a new sandbox from a template. template may be empty
+// to use the deployment's configured default template, if it has one; the
+// server rejects the request if it does not.
+func (c *Client) CreateSandbox(ctx context.Context, template string, opts ...CreateOptions) (*Sandbox, error) {
 	var o CreateOptions
 	if len(opts) > 0 {
 		o = opts[0]
@@ -57,7 +51,7 @@ func (s *SandboxCollection) Create(ctx context.Context, template string, opts ..
 		protoWait = runtimev1.CreateWait_CREATE_WAIT_NONE
 	}
 	request := &runtimev1.TApiServiceCreateRequest{
-		ApiKey:         s.client.apiKey,
+		ApiKey:         c.apiKey,
 		IdempotencyKey: key,
 		Template: &runtimev1.TemplateBinding{
 			TemplateId: template,
@@ -67,7 +61,7 @@ func (s *SandboxCollection) Create(ctx context.Context, template string, opts ..
 		Name: o.Name,
 	}
 
-	dl, err := startDeadline(s.client.timeout)
+	dl, err := startDeadline(c.timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +73,7 @@ func (s *SandboxCollection) Create(ctx context.Context, template string, opts ..
 			return nil, &SandboxCreationTimeoutError{BaseError{Msg: err.Error(), IdempotencyKey: key}}
 		}
 		callCtx, cancel := context.WithTimeout(ctx, remaining)
-		client, tErr := s.client.tapiClient()
+		client, tErr := c.tapiClient()
 		if tErr != nil {
 			cancel()
 			return nil, tErr
@@ -87,14 +81,14 @@ func (s *SandboxCollection) Create(ctx context.Context, template string, opts ..
 		response, callErr := client.Create(callCtx, request)
 		cancel()
 		if callErr == nil {
-			return sandboxFromCreate(s.client, response, wait, key)
+			return sandboxFromCreate(c, response, wait, key)
 		}
-		if !IsRetryable(callErr) || attempts >= s.client.maxRetries {
+		if !IsRetryable(callErr) || attempts >= c.maxRetries {
 			var timeoutErr *TimeoutError
 			if errors.As(callErr, &timeoutErr) {
 				return nil, &SandboxCreationTimeoutError{BaseError{Msg: timeoutErr.Msg, IdempotencyKey: key}}
 			}
-			mapped := MapRPCError(callErr, s.client.secrets(key), WithIdempotencyKey(key), WithCreate())
+			mapped := MapRPCError(callErr, c.secrets(key), WithIdempotencyKey(key), WithCreate())
 			var mappedTimeout *TimeoutError
 			if errors.As(mapped, &mappedTimeout) {
 				return nil, &SandboxCreationTimeoutError{BaseError{Msg: mappedTimeout.Msg, IdempotencyKey: key}}
@@ -107,14 +101,14 @@ func (s *SandboxCollection) Create(ctx context.Context, template string, opts ..
 	}
 }
 
-// Get reconnects to an existing sandbox by ID.
-func (s *SandboxCollection) Get(ctx context.Context, sandboxID string) (*Sandbox, error) {
+// GetSandbox reconnects to an existing sandbox by ID.
+func (c *Client) GetSandbox(ctx context.Context, sandboxID string) (*Sandbox, error) {
 	if sandboxID == "" {
 		return nil, &InvalidRequestError{BaseError{Msg: "sandbox_id is required"}}
 	}
-	request := &runtimev1.TApiGetSandboxRequest{ApiKey: s.client.apiKey, SandboxId: sandboxID}
+	request := &runtimev1.TApiGetSandboxRequest{ApiKey: c.apiKey, SandboxId: sandboxID}
 
-	dl, err := startDeadline(s.client.timeout)
+	dl, err := startDeadline(c.timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -123,10 +117,10 @@ func (s *SandboxCollection) Get(ctx context.Context, sandboxID string) (*Sandbox
 	for {
 		remaining, err := dl.remaining()
 		if err != nil {
-			return nil, MapRPCError(err, s.client.secrets(), WithSandboxID(sandboxID))
+			return nil, MapRPCError(err, c.secrets(), WithSandboxID(sandboxID))
 		}
 		callCtx, cancel := context.WithTimeout(ctx, remaining)
-		client, tErr := s.client.tapiClient()
+		client, tErr := c.tapiClient()
 		if tErr != nil {
 			cancel()
 			return nil, tErr
@@ -134,10 +128,10 @@ func (s *SandboxCollection) Get(ctx context.Context, sandboxID string) (*Sandbox
 		response, callErr := client.GetSandbox(callCtx, request)
 		cancel()
 		if callErr == nil {
-			return sandboxFromGet(s.client, response, sandboxID)
+			return sandboxFromGet(c, response, sandboxID)
 		}
-		if !IsRetryable(callErr) || attempts >= s.client.maxRetries {
-			return nil, MapRPCError(callErr, s.client.secrets(), WithSandboxID(sandboxID))
+		if !IsRetryable(callErr) || attempts >= c.maxRetries {
+			return nil, MapRPCError(callErr, c.secrets(), WithSandboxID(sandboxID))
 		}
 		attempts++
 		sleepWithDeadline(ctx, backoff, dl)
@@ -145,19 +139,19 @@ func (s *SandboxCollection) Get(ctx context.Context, sandboxID string) (*Sandbox
 	}
 }
 
-// GetByName reconnects to an existing sandbox by name.
+// GetSandboxByName reconnects to an existing sandbox by name.
 //
 // Names are not unique. This resolves the name to a single sandbox and then
 // fetches it by ID, so it reports an error rather than guessing when the name
 // matches more than one: picking one silently would make a later Delete
 // destroy an arbitrary sandbox.
-func (s *SandboxCollection) GetByName(ctx context.Context, name string) (*Sandbox, error) {
+func (c *Client) GetSandboxByName(ctx context.Context, name string) (*Sandbox, error) {
 	if name == "" {
 		return nil, &InvalidRequestError{BaseError{Msg: "name is required"}}
 	}
 	// Two is enough to tell "one match" from "more than one" without paging
 	// the whole tenant.
-	matches, err := s.List(ctx, ListOptions{Name: name, Limit: 2})
+	matches, err := c.ListSandboxes(ctx, ListOptions{Name: name, Limit: 2})
 	if err != nil {
 		return nil, err
 	}
@@ -165,28 +159,28 @@ func (s *SandboxCollection) GetByName(ctx context.Context, name string) (*Sandbo
 	case 0:
 		return nil, &SandboxNotFoundError{BaseError{Msg: "no sandbox is named " + name}}
 	case 1:
-		return s.Get(ctx, matches[0].ID)
+		return c.GetSandbox(ctx, matches[0].ID)
 	default:
 		return nil, &InvalidRequestError{BaseError{Msg: "more than one sandbox is named " + name +
-			", including " + matches[0].ID + " and " + matches[1].ID + "; use Get with a sandbox id"}}
+			", including " + matches[0].ID + " and " + matches[1].ID + "; use GetSandbox with a sandbox id"}}
 	}
 }
 
-// Delete deletes a sandbox by id in a single RPC, without first fetching a
-// handle. It backs the flat Client.DeleteSandbox; Sandbox.Delete also calls
-// through to this and additionally updates its own local state (LastObservedStatus,
-// the local "already deleted" short-circuit) since it has a handle to update.
+// DeleteSandbox deletes a sandbox by id in a single RPC, without first
+// fetching a handle. Sandbox.Delete also calls through to this and
+// additionally updates its own local state (LastObservedStatus, the local
+// "already deleted" short-circuit) since it has a handle to update.
 //
 // Because there is no handle here, there is no local idempotency check: a
 // second call always makes a second RPC, and the response's AlreadyDeleted
 // reports what the server observed rather than what this SDK remembers.
-func (s *SandboxCollection) Delete(ctx context.Context, sandboxID string) (*DeleteResult, error) {
+func (c *Client) DeleteSandbox(ctx context.Context, sandboxID string) (*DeleteResult, error) {
 	if sandboxID == "" {
 		return nil, &InvalidRequestError{BaseError{Msg: "sandbox_id is required"}}
 	}
-	request := &runtimev1.TApiDeleteSandboxRequest{ApiKey: s.client.apiKey, SandboxId: sandboxID}
+	request := &runtimev1.TApiDeleteSandboxRequest{ApiKey: c.apiKey, SandboxId: sandboxID}
 
-	dl, err := startDeadline(s.client.timeout)
+	dl, err := startDeadline(c.timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -195,10 +189,10 @@ func (s *SandboxCollection) Delete(ctx context.Context, sandboxID string) (*Dele
 	for {
 		remaining, err := dl.remaining()
 		if err != nil {
-			return nil, MapRPCError(err, s.client.secrets(), WithSandboxID(sandboxID))
+			return nil, MapRPCError(err, c.secrets(), WithSandboxID(sandboxID))
 		}
 		callCtx, cancel := context.WithTimeout(ctx, remaining)
-		client, tErr := s.client.tapiClient()
+		client, tErr := c.tapiClient()
 		if tErr != nil {
 			cancel()
 			return nil, tErr
@@ -212,8 +206,8 @@ func (s *SandboxCollection) Delete(ctx context.Context, sandboxID string) (*Dele
 			}
 			return &DeleteResult{SandboxID: resultID, AlreadyDeleted: response.GetAlreadyDeleted()}, nil
 		}
-		if !IsRetryable(callErr) || attempts >= s.client.maxRetries {
-			return nil, MapRPCError(callErr, s.client.secrets(), WithSandboxID(sandboxID))
+		if !IsRetryable(callErr) || attempts >= c.maxRetries {
+			return nil, MapRPCError(callErr, c.secrets(), WithSandboxID(sandboxID))
 		}
 		attempts++
 		sleepWithDeadline(ctx, backoff, dl)
@@ -221,17 +215,17 @@ func (s *SandboxCollection) Delete(ctx context.Context, sandboxID string) (*Dele
 	}
 }
 
-// Resume resumes a sandbox by id in a single RPC, without first fetching a
-// handle. It backs the flat Client.ResumeSandbox; Sandbox.Resume also calls
-// through to the same RPC via resumeSandbox, additionally copying the
-// refreshed capability and exec endpoint onto its own handle, since only a
-// handle has those to update -- ResumeResult itself never carries them.
+// ResumeSandbox resumes a sandbox by id in a single RPC, without first
+// fetching a handle. Sandbox.Resume also calls through to the same RPC via
+// resumeSandbox, additionally copying the refreshed capability and exec
+// endpoint onto its own handle, since only a handle has those to update --
+// ResumeResult itself never carries them.
 //
 // Because there is no handle here, this does not check for a locally known
 // failed status first the way Sandbox.Resume does -- the server is always
 // asked, and a failed sandbox's rejection comes back as an ordinary RPC error.
-func (s *SandboxCollection) Resume(ctx context.Context, sandboxID string, opts ...ResumeOptions) (*ResumeResult, error) {
-	result, _, err := s.resumeSandbox(ctx, sandboxID, opts...)
+func (c *Client) ResumeSandbox(ctx context.Context, sandboxID string, opts ...ResumeOptions) (*ResumeResult, error) {
+	result, _, err := c.resumeSandbox(ctx, sandboxID, opts...)
 	return result, err
 }
 
@@ -239,7 +233,7 @@ func (s *SandboxCollection) Resume(ctx context.Context, sandboxID string, opts .
 // response alongside the mapped ResumeResult so Sandbox.Resume can read the
 // capability and exec endpoint fields ResumeResult does not expose, without
 // a second implementation of the retry loop.
-func (s *SandboxCollection) resumeSandbox(ctx context.Context, sandboxID string, opts ...ResumeOptions) (*ResumeResult, *runtimev1.TApiResumeSandboxResponse, error) {
+func (c *Client) resumeSandbox(ctx context.Context, sandboxID string, opts ...ResumeOptions) (*ResumeResult, *runtimev1.TApiResumeSandboxResponse, error) {
 	if sandboxID == "" {
 		return nil, nil, &InvalidRequestError{BaseError{Msg: "sandbox_id is required"}}
 	}
@@ -251,9 +245,9 @@ func (s *SandboxCollection) resumeSandbox(ctx context.Context, sandboxID string,
 	if key == "" {
 		key = generateRandomToken()
 	}
-	request := &runtimev1.TApiResumeSandboxRequest{ApiKey: s.client.apiKey, SandboxId: sandboxID, IdempotencyKey: key}
+	request := &runtimev1.TApiResumeSandboxRequest{ApiKey: c.apiKey, SandboxId: sandboxID, IdempotencyKey: key}
 
-	dl, err := startDeadline(s.client.timeout)
+	dl, err := startDeadline(c.timeout)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -262,10 +256,10 @@ func (s *SandboxCollection) resumeSandbox(ctx context.Context, sandboxID string,
 	for {
 		remaining, err := dl.remaining()
 		if err != nil {
-			return nil, nil, MapRPCError(err, s.client.secrets(), WithSandboxID(sandboxID), WithIdempotencyKey(key))
+			return nil, nil, MapRPCError(err, c.secrets(), WithSandboxID(sandboxID), WithIdempotencyKey(key))
 		}
 		callCtx, cancel := context.WithTimeout(ctx, remaining)
-		client, tErr := s.client.tapiClient()
+		client, tErr := c.tapiClient()
 		if tErr != nil {
 			cancel()
 			return nil, nil, tErr
@@ -283,8 +277,8 @@ func (s *SandboxCollection) resumeSandbox(ctx context.Context, sandboxID string,
 				AlreadyRunning:       response.GetAlreadyRunning(),
 			}, response, nil
 		}
-		if !IsRetryable(callErr) || attempts >= s.client.maxRetries {
-			return nil, nil, MapRPCError(callErr, s.client.secrets(), WithSandboxID(sandboxID), WithIdempotencyKey(key))
+		if !IsRetryable(callErr) || attempts >= c.maxRetries {
+			return nil, nil, MapRPCError(callErr, c.secrets(), WithSandboxID(sandboxID), WithIdempotencyKey(key))
 		}
 		attempts++
 		sleepWithDeadline(ctx, backoff, dl)
@@ -292,7 +286,7 @@ func (s *SandboxCollection) resumeSandbox(ctx context.Context, sandboxID string,
 	}
 }
 
-// ListOptions configures SandboxCollection.List.
+// ListOptions configures Client.ListSandboxes.
 type ListOptions struct {
 	// States filters results to the given lifecycle states. StatusDeleted is
 	// not a valid filter. Empty means no filter.
@@ -307,9 +301,10 @@ type ListOptions struct {
 	Name string
 }
 
-// List fetches sandbox summaries, paging internally as needed, and returns
-// them as a single slice. A zero Limit returns every matching sandbox.
-func (s *SandboxCollection) List(ctx context.Context, opts ...ListOptions) ([]SandboxSummary, error) {
+// ListSandboxes fetches sandbox summaries, paging internally as needed, and
+// returns them as a single slice. A zero Limit returns every matching
+// sandbox.
+func (c *Client) ListSandboxes(ctx context.Context, opts ...ListOptions) ([]SandboxSummary, error) {
 	var o ListOptions
 	if len(opts) > 0 {
 		o = opts[0]
@@ -334,14 +329,14 @@ func (s *SandboxCollection) List(ctx context.Context, opts ...ListOptions) ([]Sa
 			pageSize = int32(min(100, remaining))
 		}
 		request := &runtimev1.TApiListSandboxesRequest{
-			ApiKey:    s.client.apiKey,
+			ApiKey:    c.apiKey,
 			States:    stateValues,
 			PageSize:  pageSize,
 			PageToken: pageToken,
 			Name:      o.Name,
 		}
 
-		dl, err := startDeadline(s.client.timeout)
+		dl, err := startDeadline(c.timeout)
 		if err != nil {
 			return nil, err
 		}
@@ -351,10 +346,10 @@ func (s *SandboxCollection) List(ctx context.Context, opts ...ListOptions) ([]Sa
 		for {
 			remaining, err := dl.remaining()
 			if err != nil {
-				return nil, MapRPCError(err, s.client.secrets(pageToken))
+				return nil, MapRPCError(err, c.secrets(pageToken))
 			}
 			callCtx, cancel := context.WithTimeout(ctx, remaining)
-			client, tErr := s.client.tapiClient()
+			client, tErr := c.tapiClient()
 			if tErr != nil {
 				cancel()
 				return nil, tErr
@@ -365,8 +360,8 @@ func (s *SandboxCollection) List(ctx context.Context, opts ...ListOptions) ([]Sa
 				response = resp
 				break
 			}
-			if !IsRetryable(callErr) || attempts >= s.client.maxRetries {
-				return nil, MapRPCError(callErr, s.client.secrets(pageToken))
+			if !IsRetryable(callErr) || attempts >= c.maxRetries {
+				return nil, MapRPCError(callErr, c.secrets(pageToken))
 			}
 			attempts++
 			sleepWithDeadline(ctx, backoff, dl)
