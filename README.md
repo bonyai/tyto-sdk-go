@@ -3,7 +3,7 @@
 Run code in a fast, isolated sandbox — from Go.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/bonyai/tyto-go.svg)](https://pkg.go.dev/github.com/bonyai/tyto-go)
-[![Go Version](https://img.shields.io/badge/go-1.24%2B-00ADD8)](go.mod)
+[![Go Version](https://img.shields.io/badge/go-1.25%2B-00ADD8)](go.mod)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ```bash
@@ -120,7 +120,7 @@ directly when a `*Sandbox` is already in hand, such as right after
 go get github.com/bonyai/tyto-go
 ```
 
-Requires Go 1.24 or newer, and depends on `google.golang.org/grpc` and
+Requires Go 1.25 or newer, and depends on `google.golang.org/grpc` and
 `google.golang.org/protobuf`.
 
 ## Configuration
@@ -236,13 +236,17 @@ sandbox, err := client.CreateSandbox(ctx, "bonya-dev", tyto.CreateOptions{
 
 Parameters:
 
-- `template string` is required and must be non-empty.
+- `template string` may be empty to use the deployment's configured default
+  template, if it has one; the server rejects the request if it does not.
 - `CreateOptions.Version string` uses the server's default template version
   when empty.
 - `CreateOptions.Wait Wait` controls when Create returns. Defaults to
   `WaitReady`.
 - `CreateOptions.IdempotencyKey string` is sent to the service. If empty, the
   SDK generates one and reuses it for create transport retries.
+- `CreateOptions.Name string` is an optional display name, at most 80 bytes.
+  When empty the service generates a friendly one, returned on the resulting
+  Sandbox. Names are not unique.
 
 Wait modes:
 
@@ -634,6 +638,9 @@ means output produced while nobody was attached is being replayed now;
 `HistoryDropped: true` means the 1 MiB replay ring dropped some of the oldest
 of it. Attaching to a suspended sandbox's session wakes it, the same way
 `ExecStream` does.
+
+`AttachOptions.MaxReplayBytes` caps how much of the buffered replay is
+returned; zero uses the server's default cap.
 
 Attaching preempts any other attached client for that session: the previous
 stream receives a `SessionEnded{Reason: SessionEndedReasonTakeover}` event and
